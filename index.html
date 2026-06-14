@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>フリフリ・シューティング！</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- 背景のゲーム画面（常に最背面） -->
+  <canvas id="game"></canvas>
+  <!-- カメラ映像（画面には直接出さず、解析用） -->
+  <video id="cam" playsinline muted></video>
+
+  <!-- file:// で開いたときの警告 -->
+  <div id="file-warning" class="warning" style="display:none">
+    ⚠️ ファイルを直接ひらいています。<br />
+    カメラを使うには <b>start.bat（Windows）</b> または <b>start.sh（Mac/Linux）</b> から起動してください。
+  </div>
+
+  <!-- ① タイトル -->
+  <section class="screen active" data-screen="title">
+    <div class="card">
+      <h1>フリフリ・シューティング！</h1>
+      <p class="sub">～手ぶらで的当てバトル～</p>
+      <button id="btn-start" class="big">▶ スタート</button>
+      <button id="btn-show-ranking" class="ghost">🏆 ランキングを見る</button>
+    </div>
+  </section>
+
+  <!-- ② モード選択 -->
+  <section class="screen" data-screen="mode">
+    <div class="card">
+      <h2>何人で あそぶ？</h2>
+      <div class="row">
+        <button id="btn-1p" class="mode">🙋<br />1人で</button>
+        <button id="btn-2p" class="mode">🙋🙋<br />2人で</button>
+      </div>
+      <label class="slider">
+        照準の感度
+        <input id="sens" type="range" min="0.2" max="0.8" step="0.05" />
+      </label>
+      <label class="check">
+        <input id="chk-mouse" type="checkbox" /> カメラなし（マウスで遊ぶ）
+      </label>
+      <p id="mode-mouse-note" class="note" style="display:none">マウスモードは1人用です。</p>
+      <button id="btn-mode-back" class="ghost">← もどる</button>
+    </div>
+  </section>
+
+  <!-- ③ カメラ確認（キャリブレーション） -->
+  <section class="screen" data-screen="calib">
+    <div class="card overlay-card">
+      <h2>カメラに 手を うつしてね</h2>
+      <p class="howto">✋ パーで ねらう　→　✊ グーで うつ！</p>
+      <p id="calib-status" class="status">⏳ 準備中…</p>
+      <label class="slider">
+        照準の感度
+        <input id="sens2" type="range" min="0.2" max="0.8" step="0.05" />
+      </label>
+      <div class="row">
+        <button id="btn-calib-start" class="big" disabled>はじめる</button>
+      </div>
+      <div class="row">
+        <button id="btn-calib-mouse" class="ghost">カメラなしで進む（マウス）</button>
+        <button id="btn-calib-back" class="ghost">← もどる</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑤ 結果 -->
+  <section class="screen" data-screen="result">
+    <div class="card">
+      <h2>おつかれさま！</h2>
+      <div class="score-big"><span id="result-score">0</span><small>点</small></div>
+      <p class="sub">なまえを入れてランキングに登録（空欄でもOK）</p>
+      <input id="result-name" class="name-input" maxlength="16" placeholder="Player#1" />
+      <div class="row">
+        <button id="btn-result-register" class="big">ランキングに登録</button>
+        <button id="btn-result-skip" class="ghost">名前なしで登録</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑥ ランキング -->
+  <section class="screen" data-screen="ranking">
+    <div class="card">
+      <h2>🏆 ランキング</h2>
+      <p id="ranking-caption" class="caption"></p>
+      <table class="ranking">
+        <thead><tr><th>順位</th><th>なまえ</th><th>得点</th></tr></thead>
+        <tbody id="ranking-body"></tbody>
+      </table>
+      <div class="row">
+        <button id="btn-ranking-again" class="big">もう一度あそぶ</button>
+        <button id="btn-ranking-export" class="ghost">記録を保存（ファイル）</button>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    if (location.protocol === 'file:') {
+      document.getElementById('file-warning').style.display = 'block';
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

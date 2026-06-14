@@ -1,0 +1,137 @@
+/* ============================================================
+   見た目（大画面・プロジェクターでも見やすい大きめUI）
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0d1426;
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+  color: #fff;
+  -webkit-user-select: none; user-select: none;
+}
+
+#game {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  display: block;
+  z-index: 0;
+}
+
+/* カメラ映像は解析用なので画面外に置く */
+#cam {
+  position: fixed;
+  width: 2px; height: 2px;
+  opacity: 0; pointer-events: none;
+  top: -10px; left: -10px;
+}
+
+/* 画面（オーバーレイ） */
+.screen {
+  position: fixed; inset: 0;
+  z-index: 2;
+  display: none;
+  align-items: center; justify-content: center;
+  padding: 24px;
+}
+.screen.active { display: flex; }
+
+.card {
+  background: rgba(16, 24, 44, 0.92);
+  border: 2px solid rgba(120, 170, 255, 0.35);
+  border-radius: 24px;
+  padding: 40px 44px;
+  width: min(640px, 92vw);
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+/* カメラ確認は映像が透けて見えるよう半透明 */
+.overlay-card { background: rgba(16, 24, 44, 0.78); }
+
+h1 { font-size: clamp(32px, 6vw, 56px); margin-bottom: 8px; letter-spacing: 1px; }
+h2 { font-size: clamp(26px, 4vw, 38px); margin-bottom: 18px; }
+.sub { color: #bcd0f5; font-size: 18px; margin-bottom: 24px; }
+.howto { color: #ffd23b; font-size: 22px; font-weight: 700; margin-bottom: 14px; }
+.status { font-size: 20px; margin: 12px 0 18px; min-height: 28px; }
+.note { color: #ffb3b3; margin-top: 8px; }
+.caption { color: #ffd23b; font-size: 20px; font-weight: 700; margin-bottom: 14px; min-height: 26px; }
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 16px;
+  transition: transform .08s ease, filter .15s ease;
+}
+button:active { transform: scale(0.97); }
+button:disabled { filter: grayscale(0.7) brightness(0.7); cursor: not-allowed; }
+
+.big {
+  display: block;
+  width: 100%;
+  margin: 10px auto;
+  padding: 18px 24px;
+  font-size: 24px; font-weight: 800;
+  color: #15203a;
+  background: linear-gradient(180deg, #ffe27a, #ffc93b);
+  box-shadow: 0 6px 0 #c79213;
+}
+.big:active { box-shadow: 0 2px 0 #c79213; }
+
+.ghost {
+  display: inline-block;
+  margin: 8px 6px 0;
+  padding: 12px 20px;
+  font-size: 17px;
+  color: #cfe0ff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+
+.mode {
+  flex: 1; min-width: 160px;
+  padding: 28px 10px;
+  font-size: 26px; font-weight: 800; line-height: 1.5;
+  color: #fff;
+  background: linear-gradient(180deg, #3b66c9, #274a98);
+  box-shadow: 0 6px 0 #1b347a;
+}
+
+.slider { display: block; margin: 22px auto 6px; font-size: 18px; color: #bcd0f5; }
+.slider input { display: block; width: 80%; margin: 12px auto 0; height: 28px; }
+.check { display: inline-block; margin-top: 16px; font-size: 18px; color: #cfe0ff; }
+.check input { transform: scale(1.4); margin-right: 8px; vertical-align: middle; }
+
+.score-big { font-size: 84px; font-weight: 900; color: #ffd23b; margin: 6px 0 16px; }
+.score-big small { font-size: 30px; color: #bcd0f5; margin-left: 8px; }
+
+.name-input {
+  width: 80%;
+  padding: 14px 16px;
+  font-size: 22px;
+  text-align: center;
+  border-radius: 12px;
+  border: 2px solid rgba(120, 170, 255, 0.5);
+  background: #0f1830;
+  color: #fff;
+  margin-bottom: 18px;
+}
+
+.ranking { width: 100%; border-collapse: collapse; margin: 10px 0 20px; }
+.ranking th, .ranking td { padding: 10px 12px; font-size: 20px; }
+.ranking thead th { color: #9fb6e0; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
+.ranking tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.ranking td.rank { width: 70px; font-size: 24px; }
+.ranking td.score { text-align: right; font-weight: 800; color: #ffd23b; }
+.ranking td.name { text-align: left; }
+.ranking tr.me { background: rgba(255, 210, 59, 0.18); border-radius: 8px; }
+.ranking td.empty { color: #9fb6e0; padding: 24px; }
+
+.warning {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  background: #b51d2a; color: #fff;
+  padding: 16px; text-align: center; font-size: 18px; line-height: 1.6;
+}

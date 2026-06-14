@@ -1,0 +1,33 @@
+// ============================================================
+//  設定（ここの数字を変えればゲームを調整できます）
+//  非エンジニアの方へ: まずはこのファイルだけ触ればOKです。
+// ============================================================
+
+export const CONFIG = {
+  // --- ゲームの基本 ---
+  GAME_DURATION: 40,        // 制限時間（秒）
+  TARGET_COUNT: 6,          // 画面に出る的の数（多いほど忙しい）
+  COUNTDOWN_FROM: 3,        // 開始前のカウントダウン（3,2,1）
+
+  // --- 操作・狙いの感触 ---
+  SHOOT_COOLDOWN_MS: 350,   // 連射しすぎ防止（1発ごとの待ち時間ミリ秒）
+  SENSITIVITY_DEFAULT: 0.45, // 照準の追従の強さ(0.2=なめらか/ゆっくり .. 0.8=機敏/プルプル)
+  GESTURE_SCORE_MIN: 0.55,  // 「グー」と判定する自信のしきい値(0〜1)
+  CROSSHAIR_HOLD_MS: 500,   // 手を見失っても照準を保持する時間（ミリ秒）
+
+  // --- ランキング ---
+  RANKING_KEY: 'wii_ranking_v1',
+  RANKING_KEEP: 50,         // 保存しておく件数
+  RANKING_SHOW: 12,         // 画面に表示する件数
+
+  // --- カメラ手認識(MediaPipe) ---
+  // モデルの場所。標準はインターネット上(オンラインで動く)。
+  // 文化祭などネットが無い場所では models/gesture_recognizer.task に
+  // ダウンロードして、下を 'models/gesture_recognizer.task' に書き換えてください。
+  MODEL_PATH: 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task',
+  WASM_PATH: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm',
+  VISION_ESM: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35',
+
+  // --- 見た目 ---
+  PLAYER_COLORS: ['#ff4d5e', '#3aa0ff'], // P1=赤, P2=青
+};
