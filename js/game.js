@@ -75,7 +75,7 @@ export class Game {
   }
 
   _projectTarget(t) {
-    const h = this.hFloat + (t.dying ? 0 : t.amp * Math.sin(this._t * 2 + t.phase));
+    const h = this.hFloat + t.amp * Math.sin(this._t * 2 + t.phase);
     const pr = this._project(t.worldX, t.z, h);
     t.x = pr.x; t.y = pr.y; t.s = pr.s; t.radius = t.rWorld * pr.s;
   }
@@ -92,14 +92,12 @@ export class Game {
       return;
     }
 
-    // 的：左右に動いてゆらゆら（dyingは止める）。毎フレーム射影して画面座標を更新
+    // 的：左右に動いてゆらゆら（止まらず常に動く）。毎フレーム射影して画面座標を更新
     for (const t of this.targets) {
-      if (!t.dying) t.worldX += t.vx * dt;
+      t.worldX += t.vx * dt;
       this._projectTarget(t);
-      if (!t.dying) {
-        if (t.x < t.radius + 8 && t.vx < 0) t.vx *= -1;
-        else if (t.x > this.W - t.radius - 8 && t.vx > 0) t.vx *= -1;
-      }
+      if (t.x < t.radius + 8 && t.vx < 0) t.vx *= -1;
+      else if (t.x > this.W - t.radius - 8 && t.vx > 0) t.vx *= -1;
       if (t.pop < 1) t.pop = Math.min(1, t.pop + dt * 4);
     }
 
@@ -108,26 +106,30 @@ export class Game {
       if (p && p.shoot) this._fire(p, idx);
     });
 
-    // 弾（前方へ投げ重力で落ちる）。命中なら着弾で得点、外れは落ちて画面外へ
+    // 弾：弧を描いて飛ぶ。飛行中の弾が「動いている的」に当たった瞬間だけ命中。
+    //     当たらなければそのまま落ちて(前に落ちる/通り過ぎる)画面外で消える。
     for (const b of this.bullets) b.t += dt;
-    this.bullets = this.bullets.filter(b => {
-      if (b.hit) {
-        if (b.t >= b.T) {
-          this.score += b.points;
-          this.audio.playHit();
-          this.flashes.push({ x: b.exX, y: b.exY, r: 6, life: 0.4, color: b.color });
-          this.popups.push({ x: b.exX, y: b.exY, text: `+${b.points}`, color: b.color, life: 0.9, vy: -60 });
-          if (b.deadTarget) {
-            Object.assign(b.deadTarget, spawnTarget(Z_NEAR, Z_FAR, this.laneMax));
-            b.deadTarget.dying = false;
-          }
-          return false;
-        }
-        return true;
+    const survivors = [];
+    for (const b of this.bullets) {
+      const pos = this._ballXY(b);
+      const br = b.baseR * this._ballScale(b);
+      let hitT = null, bestD = Infinity;
+      for (const t of this.targets) {
+        const d = Math.hypot(pos.x - t.x, pos.y - t.y);
+        if (d <= t.radius + br * 0.5 && d < bestD) { hitT = t; bestD = d; }
       }
-      const pr = this._ballXY(b);
-      return pr.y < this.H + 160 && pr.x > -120 && pr.x < this.W + 120 && b.t < 2.2;
-    });
+      if (hitT) {
+        this.score += hitT.points;
+        this.audio.playHit();
+        this.flashes.push({ x: pos.x, y: pos.y, r: 6, life: 0.4, color: b.color });
+        this.popups.push({ x: hitT.x, y: hitT.y - hitT.radius, text: `+${hitT.points}`, color: b.color, life: 0.9, vy: -60 });
+        Object.assign(hitT, spawnTarget(Z_NEAR, Z_FAR, this.laneMax));
+        this._projectTarget(hitT);
+        continue; // 弾は消費
+      }
+      if (pos.y < this.H + 160 && pos.x > -120 && pos.x < this.W + 120 && b.t < 2.2) survivors.push(b);
+    }
+    this.bullets = survivors;
 
     this.popups = this.popups.filter(pp => (pp.life -= dt) > 0);
     this.popups.forEach(pp => { pp.y += pp.vy * dt; });
@@ -135,23 +137,18 @@ export class Game {
     this.flashes.forEach(f => { f.r += dt * 240; });
   }
 
-  // 1球投げる：画面下(手前)から、的の少し上まで上がって重力で落ちてくる弧を描く。
+  // 1球投げる：狙った点(照準)へ弧を投げるだけ。命中は飛行中の当たり判定で決まる。
   _fire(p, idx) {
     const color = CONFIG.PLAYER_COLORS[idx] || '#ffffff';
-    const hit = this._hitTest(p.x, p.y);
-    const ex = hit ? hit.x : p.x;
-    const ey = hit ? hit.y : p.y;
-    // 奥(小さい的)ほど弾も小さく着弾。手前=1.0 / 奥=その的の縮尺
-    const endScale = Math.max(0.25, Math.min(1, hit ? hit.s : this._invert(p.x, p.y).s));
+    const ex = p.x, ey = p.y;
+    const endScale = Math.max(0.25, Math.min(1, this._invert(ex, ey).s));
     const dist = Math.hypot(ex - this.W / 2, ey - (this.H - 6));
     const T = Math.max(0.30, Math.min(0.70, 0.30 + dist / 1500));
     this.bullets.push({
       sx: this.W / 2, sy: this.H - 6, ex, ey,
       arc: CONFIG.BULLET_ARC, endScale, T, t: 0,
-      hit: !!hit, points: hit ? hit.points : 0, deadTarget: hit || null,
-      color, baseR: CONFIG.BULLET_RADIUS, exX: ex, exY: ey,
+      color, baseR: CONFIG.BULLET_RADIUS,
     });
-    if (hit) hit.dying = true;
   }
 
   // 弾の画面位置：P0=手前下, P1=的の少し上(制御点), P2=的。u>1は的を越えて落下。
@@ -172,17 +169,6 @@ export class Game {
   _ballScale(b) {
     const u = Math.min(1, b.t / b.T);
     return 1 + (b.endScale - 1) * u;
-  }
-
-  // 当たり判定：照準が的の上(=的の半径以内)なら命中。的が小さい(遠い)ほど難しい。
-  _hitTest(x, y) {
-    let best = null, bestD = Infinity;
-    for (const t of this.targets) {
-      if (t.dying) continue;
-      const d = Math.hypot(t.x - x, t.y - y);
-      if (d <= t.radius && d < bestD) { best = t; bestD = d; }
-    }
-    return best;
   }
 
   render(players) {
@@ -274,10 +260,6 @@ export class Game {
       ctx.font = `bold ${Math.round(r * 0.7)}px sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(String(t.points), t.x, t.y + 1);
-    }
-    if (t.dying) {
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(t.x, t.y, r + 7, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.restore();
   }
