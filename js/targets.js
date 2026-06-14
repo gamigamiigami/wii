@@ -1,7 +1,8 @@
 // ============================================================
-//  的（ターゲット）の種類
-//  大きい的＝当てやすい＝低得点 / 小さく速い的＝高得点
-//  ※ 文化祭で誰でも当てられるよう、的は大きめ・当たり判定広めにしています。
+//  的（ターゲット）の種類と生成
+//  奥行き(z)を持たせて、遠近法で「奥にある＝小さい」を表現します。
+//  z = 0 が一番奥（遠い）, z = 1 が手前（近い）。
+//  ※ 文化祭で誰でも当てられるよう、的は大きめ・色わかりやすめにしています。
 // ============================================================
 
 export const TARGET_TYPES = [
@@ -22,20 +23,18 @@ export function pickType() {
   return TARGET_TYPES[0];
 }
 
-// 1つの的を新しい場所・速度で初期化する
-export function spawnTarget(width, height) {
+// 的を新しい場所・奥行き・速度で初期化する（奥行きは「後ろ寄り」に分布）
+export function spawnTarget() {
   const type = pickType();
-  const m = type.radius + 10; // 端に寄りすぎない余白
-  const angle = Math.random() * Math.PI * 2;
   return {
     type,
-    x: m + Math.random() * (width - m * 2),
-    y: m + Math.random() * (height - m * 2),
-    vx: Math.cos(angle) * type.speed,
-    vy: Math.sin(angle) * type.speed,
-    radius: type.radius,
+    fx: 0.1 + Math.random() * 0.8,   // 横位置(0..1)
+    z: 0.05 + Math.random() * 0.55,  // 奥行き(0=遠..1=近) → 主に奥に置いて距離感を出す
+    vfx: (Math.random() < 0.5 ? -1 : 1) * (0.05 + Math.random() * 0.13), // 横移動(1秒あたり)
     points: type.points,
-    bornAt: performance.now(),
-    pop: 0, // 出現アニメ用(0→1)
+    pop: 0,
+    dying: false,
+    // x, y, radius, scale はゲーム側で毎フレーム遠近法で計算して埋めます
+    x: 0, y: 0, radius: type.radius, scale: 1,
   };
 }

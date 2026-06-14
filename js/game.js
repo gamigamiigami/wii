@@ -1,6 +1,6 @@
 // ============================================================
-//  ゲーム本体：的の動き・発射・弾(放物線)・当たり判定・スコア・タイマー・描画
-//  入力方式(カメラ/マウス/タップ)に依存しません。
+//  ゲーム本体：的(奥行きあり)・発射・弾(放物線で奥へ)・当たり判定・スコア・描画
+//  疑似3D：的は奥行き(z)で遠近法配置。奥ほど小さく、上に。
 //  毎フレーム players = [{x, y, shoot, visible}] を受け取って動きます。
 // ============================================================
 
@@ -8,15 +8,18 @@ import { CONFIG } from './config.js';
 import { spawnTarget } from './targets.js';
 import { drawCrosshair } from './crosshair.js';
 
+const HORIZON = 0.16;   // 消失点の高さ（画面の割合。小さいほど上）
+const NEAR = 0.92;      // 一番手前の的の高さ（画面の割合）
+
 export class Game {
   constructor(canvas, audio) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.audio = audio;
     this.targets = [];
-    this.bullets = [];  // 投げた弾（放物線で飛ぶ・見える）
-    this.popups = [];   // 「+20」などの浮き上がる得点表示
-    this.flashes = [];  // 命中の波紋
+    this.bullets = [];
+    this.popups = [];
+    this.flashes = [];
     this.score = 0;
     this.timeLeft = CONFIG.GAME_DURATION;
     this.mode = '1P';
@@ -36,15 +39,35 @@ export class Game {
     this.flashes = [];
     this.targets = [];
     for (let i = 0; i < CONFIG.TARGET_COUNT; i++) {
-      this.targets.push(spawnTarget(this.W, this.H));
+      const t = spawnTarget();
+      this._projectTarget(t);
+      this.targets.push(t);
     }
     this.running = true;
+  }
+
+  // 奥行き(fx,z) → 画面座標(x,y) と 拡大率(scale) を計算（遠近法）
+  _projectTarget(t) {
+    const horizonY = this.H * HORIZON;
+    const nearY = this.H * NEAR;
+    t.y = horizonY + (nearY - horizonY) * t.z;
+    t.scale = 0.32 + 0.68 * t.z;          // 奥ほど小さい
+    const spread = 0.14 + 0.86 * t.z;     // 奥ほど横幅が狭まる（消失点へ）
+    t.x = this.W / 2 + (t.fx - 0.5) * this.W * spread;
+    t.radius = t.type.radius * t.scale;
+  }
+
+  // 画面の高さy → 奥行きの拡大率（弾の大きさ用。手前=大きい/奥=小さい）
+  _depthScaleAtY(y) {
+    const horizonY = this.H * HORIZON;
+    const nearY = this.H * NEAR;
+    const z = Math.max(0, Math.min(1, (y - horizonY) / (nearY - horizonY)));
+    return 0.28 + 0.95 * z;
   }
 
   update(dt, players) {
     if (!this.running) return;
 
-    // タイマー
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
@@ -53,25 +76,23 @@ export class Game {
       return;
     }
 
-    // 的の移動（壁で反射）＋出現アニメ。命中待ち(dying)の的は止める
+    // 的：横に移動（奥行きは固定）→ 遠近法で画面座標を更新
     for (const t of this.targets) {
       if (!t.dying) {
-        t.x += t.vx * dt;
-        t.y += t.vy * dt;
-        if (t.x < t.radius) { t.x = t.radius; t.vx *= -1; }
-        if (t.x > this.W - t.radius) { t.x = this.W - t.radius; t.vx *= -1; }
-        if (t.y < t.radius) { t.y = t.radius; t.vy *= -1; }
-        if (t.y > this.H - t.radius) { t.y = this.H - t.radius; t.vy *= -1; }
+        t.fx += t.vfx * dt;
+        if (t.fx < 0.06) { t.fx = 0.06; t.vfx *= -1; }
+        if (t.fx > 0.94) { t.fx = 0.94; t.vfx *= -1; }
       }
+      this._projectTarget(t);
       if (t.pop < 1) t.pop = Math.min(1, t.pop + dt * 4);
     }
 
-    // 発射（グー or タップ/クリックのたびに必ず弾を投げる）
+    // 発射
     players.forEach((p, idx) => {
       if (p && p.shoot) this._fire(p, idx);
     });
 
-    // 弾の物理（重力で放物線）と着弾・消滅
+    // 弾（重力で放物線。奥へ飛ぶほど小さく）
     for (const b of this.bullets) {
       b.elapsed += dt;
       b.vy += b.g * dt;
@@ -80,60 +101,55 @@ export class Game {
     }
     this.bullets = this.bullets.filter(b => {
       if (b.hit) {
-        if (b.elapsed >= b.T) {          // 的に着弾した瞬間
+        if (b.elapsed >= b.T) {
           this.score += b.points;
           this.audio.playHit();
           this.flashes.push({ x: b.tx, y: b.ty, r: 6, life: 0.35, color: b.color });
           this.popups.push({ x: b.tx, y: b.ty, text: `+${b.points}`, color: b.color, life: 0.9, vy: -60 });
           if (b.deadTarget) {
-            Object.assign(b.deadTarget, spawnTarget(this.W, this.H)); // 的を入れ替え
-            b.deadTarget.dying = false;                                // 命中待ち状態を解除
+            Object.assign(b.deadTarget, spawnTarget());
+            this._projectTarget(b.deadTarget);
           }
           return false;
         }
         return true;
       }
-      // 外れ弾はそのまま飛んで画面外で消える
       return b.x > -80 && b.x < this.W + 80 && b.y > -80 && b.y < this.H + 140;
     });
 
-    // 演出の寿命更新
     this.popups = this.popups.filter(pp => (pp.life -= dt) > 0);
     this.popups.forEach(pp => { pp.y += pp.vy * dt; });
     this.flashes = this.flashes.filter(f => (f.life -= dt) > 0);
     this.flashes.forEach(f => { f.r += dt * 220; });
   }
 
-  // 1発投げる：画面下から放物線で飛ばす。命中ならその的に着弾、外れなら飛び去る
+  // 1発投げる：画面下(手前)から放物線で奥の的へ。命中ならその的に着弾
   _fire(p, idx) {
     const color = CONFIG.PLAYER_COLORS[idx] || '#ffffff';
-    const mx = this.W / 2, my = this.H + 10;   // 発射口＝画面下の中央
+    const mx = this.W / 2, my = this.H + 10;
     const dx = p.x - mx, dy = p.y - my;
     const dist = Math.hypot(dx, dy) || 1;
     const g = CONFIG.BULLET_GRAVITY;
-    const T = Math.max(0.22, Math.min(0.5, dist / 1500)); // 飛行時間（遠いほど長い）
-    // 時刻Tで照準点(p.x,p.y)に届くよう初速を計算（重力つき放物線）
+    const T = Math.max(0.22, Math.min(0.55, dist / 1400));
     const vx = dx / T;
     const vy = (dy - 0.5 * g * T * T) / T;
 
     const hit = this._hitTest(p.x, p.y);
-    const bullet = {
+    this.bullets.push({
       x: mx, y: my, vx, vy, g, elapsed: 0, T,
       color, baseR: CONFIG.BULLET_RADIUS,
       hit: !!hit, tx: p.x, ty: p.y,
       points: hit ? hit.points : 0,
       deadTarget: hit || null,
-    };
-    this.bullets.push(bullet);
-
-    if (hit) { hit.dying = true; hit.vx = 0; hit.vy = 0; } // 着弾まで的をその場で待たせる
+    });
+    if (hit) { hit.dying = true; }
   }
 
   // 照準(x,y)の当たり判定。的の中心が HIT_RADIUS 以内なら命中（一番近いもの）
   _hitTest(x, y) {
     let best = null, bestD = Infinity;
     for (const t of this.targets) {
-      if (t.dying) continue; // 命中待ちの的は二重に当てない
+      if (t.dying) continue;
       const d = Math.hypot(t.x - x, t.y - y);
       if (d <= CONFIG.HIT_RADIUS && d < bestD) { best = t; bestD = d; }
     }
@@ -144,29 +160,22 @@ export class Game {
     const ctx = this.ctx;
     this._drawBackground(ctx);
 
-    // 的
-    for (const t of this.targets) {
-      const s = 0.6 + 0.4 * t.pop;
-      const r = t.radius * s;
+    // 奥の的から順に描く（奥行きの重なりを正しく）
+    const ordered = [...this.targets].sort((a, b) => a.z - b.z);
+    for (const t of ordered) {
+      const r = t.radius * (0.6 + 0.4 * t.pop);
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = t.type.color;
       ctx.globalAlpha = 0.35;
-      ctx.fill();
+      ctx.fillStyle = t.type.color;
+      ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = Math.max(2, 4 * t.scale);
       ctx.strokeStyle = t.type.color;
-      ctx.stroke();
-      // 命中待ちの的は白いリングで「狙われている」表示
+      ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.stroke();
       if (t.dying) {
-        ctx.globalAlpha = 0.9;
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, r + 6, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(t.x, t.y, r + 6, 0, Math.PI * 2); ctx.stroke();
       }
       ctx.font = `${Math.round(r * 1.3)}px serif`;
       ctx.textAlign = 'center';
@@ -175,29 +184,28 @@ export class Game {
       ctx.restore();
     }
 
-    // 弾（投げた球。上=遠くにいくほど小さく描画）
+    // 弾（投げた球。手前=大きく/奥=小さく。立体的な陰影つき）
     for (const b of this.bullets) {
-      const scale = Math.max(0.3, Math.min(1, 0.3 + 0.7 * (b.y / this.H)));
-      const r = b.baseR * scale;
+      const r = b.baseR * this._depthScaleAtY(b.y);
       const n = Math.hypot(b.vx, b.vy) || 1;
       ctx.save();
+      // 軌跡
       ctx.lineCap = 'round';
-      ctx.globalAlpha = 0.4;
+      ctx.globalAlpha = 0.35;
       ctx.strokeStyle = b.color;
-      ctx.lineWidth = Math.max(2, r * 0.8);
+      ctx.lineWidth = Math.max(2, r * 0.7);
       ctx.beginPath();
-      ctx.moveTo(b.x - b.vx / n * r * 1.8, b.y - b.vy / n * r * 1.8);
+      ctx.moveTo(b.x - b.vx / n * r * 2.2, b.y - b.vy / n * r * 2.2);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      // 立体的な玉
       ctx.globalAlpha = 1;
-      ctx.fillStyle = b.color;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.beginPath();
-      ctx.arc(b.x - r * 0.3, b.y - r * 0.3, r * 0.35, 0, Math.PI * 2);
-      ctx.fill();
+      const grad = ctx.createRadialGradient(b.x - r * 0.35, b.y - r * 0.4, r * 0.1, b.x, b.y, r);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(0.35, b.color);
+      grad.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -207,9 +215,7 @@ export class Game {
       ctx.globalAlpha = Math.max(0, f.life / 0.35) * 0.7;
       ctx.strokeStyle = f.color;
       ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
 
@@ -233,12 +239,42 @@ export class Game {
     this._drawHUD(ctx);
   }
 
+  // 遠近法の背景（奥に消失点のある床）
   _drawBackground(ctx) {
-    const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, '#1b2a4a');
-    g.addColorStop(1, '#0d1426');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.W, this.H);
+    const W = this.W, H = this.H;
+    const horizonY = H * HORIZON;
+    // 奥（空）
+    const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+    sky.addColorStop(0, '#0b1226');
+    sky.addColorStop(1, '#1c2f57');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, horizonY);
+    // 床（手前へ）
+    const floor = ctx.createLinearGradient(0, horizonY, 0, H);
+    floor.addColorStop(0, '#16294d');
+    floor.addColorStop(1, '#090f1d');
+    ctx.fillStyle = floor;
+    ctx.fillRect(0, horizonY, W, H - horizonY);
+    // 消失点グリッド
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,170,255,0.10)';
+    ctx.lineWidth = 1;
+    const vpx = W / 2, vpy = horizonY;
+    for (let i = -6; i <= 6; i++) {
+      const bx = W / 2 + i * (W / 9);
+      ctx.beginPath(); ctx.moveTo(vpx, vpy); ctx.lineTo(bx, H); ctx.stroke();
+    }
+    const nearY = H * NEAR;
+    for (let k = 1; k <= 6; k++) {
+      const z = k / 7;
+      const y = horizonY + (nearY - horizonY) * z;
+      const spread = 0.14 + 0.86 * z;
+      ctx.beginPath();
+      ctx.moveTo(W / 2 - W * spread / 2, y);
+      ctx.lineTo(W / 2 + W * spread / 2, y);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   _drawHUD(ctx) {
