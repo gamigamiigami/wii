@@ -1,18 +1,17 @@
 // ============================================================
-//  ゲーム本体：部屋シーン・的(連続した奥行き)・投球(平らな放物線で奥へ)・命中・描画
-//  距離感は「手前の床／奥の壁」＋「的の大きさ(手前=大/奥=小)」で表現。
-//  投球は直線＋ゆるい山(BULLET_ARC)で、まっすぐ平らに投げます。
+//  ゲーム本体：部屋シーン・的(擬似3D・奥行きz)・投球(前方へ投げ重力で落ちる)・命中・描画
+//  距離感：床が手前から奥(消失点)へ伸び、的は奥ほど小さく・高く・速く・高得点。
+//  弾は「前方(奥)へ投げ出し、上がって重力で落ちる」本物の放物線（ワールド空間で物理計算）。
 //  毎フレーム players = [{x, y, shoot, visible}] を受け取って動きます。
-//  assets/background.jpg, assets/target1..6.png があれば自動で使用（無ければ自前描画）。
+//  assets/background.jpg, assets/target1..6.png があれば自動使用（無ければ自前描画）。
 // ============================================================
 
 import { CONFIG } from './config.js';
 import { spawnTarget } from './targets.js';
 import { drawCrosshair } from './crosshair.js';
 
-const FLOOR_RATIO = 0.72;     // 床のはじまる高さ
-const NEAR_Y_RATIO = 0.60;    // 一番手前の的の高さ（投球の山あたり）
-const FAR_Y_RATIO = 0.24;     // 一番奥の的の高さ
+const Z_NEAR = 0.12;          // 一番手前の的の奥行き
+const Z_FAR = 2.6;            // 一番奥の的の奥行き
 
 export class Game {
   constructor(canvas, audio) {
@@ -35,9 +34,29 @@ export class Game {
 
   get W() { return this.canvas.width; }
   get H() { return this.canvas.height; }
-  get floorY() { return this.H * FLOOR_RATIO; }
-  get nearY() { return this.H * NEAR_Y_RATIO; }
-  get farY() { return this.H * FAR_Y_RATIO; }
+  // --- 遠近法の基準 ---
+  get horizonY() { return this.H * 0.34; }            // 消失点(床の奥のはて)の高さ
+  get groundNearY() { return this.H * 1.04; }         // 一番手前の床の高さ(画面下の外)
+  get floorSpan() { return this.groundNearY - this.horizonY; }
+  get hFloat() { return this.floorSpan * 0.34; }      // 的が床から浮く高さ(ワールド)
+  get A() { return this.floorSpan - this.hFloat; }
+  get laneMax() { return this.W * 0.42; }
+
+  // ワールド(worldX, z, h) → 画面(x, y) と 縮尺 s
+  _project(worldX, z, h) {
+    const s = 1 / (1 + Math.max(0, z));
+    return {
+      x: this.W / 2 + worldX * s,
+      y: this.horizonY + this.floorSpan * s - h * s,
+      s,
+    };
+  }
+  // 画面(cx, cy)（的が浮く高さ hFloat と仮定）→ ワールド(worldX, z)
+  _invert(cx, cy) {
+    let s = (cy - this.horizonY) / this.A;
+    s = Math.max(0.16, Math.min(1.25, s));
+    return { z: 1 / s - 1, worldX: (cx - this.W / 2) / s, s };
+  }
 
   reset(mode) {
     this.mode = mode;
@@ -48,9 +67,17 @@ export class Game {
     this.flashes = [];
     this.targets = [];
     for (let i = 0; i < CONFIG.TARGET_COUNT; i++) {
-      this.targets.push(spawnTarget(this.W, this.nearY, this.farY));
+      const t = spawnTarget(Z_NEAR, Z_FAR, this.laneMax);
+      this._projectTarget(t);
+      this.targets.push(t);
     }
     this.running = true;
+  }
+
+  _projectTarget(t) {
+    const h = this.hFloat + (t.dying ? 0 : t.amp * Math.sin(this._t * 2 + t.phase));
+    const pr = this._project(t.worldX, t.z, h);
+    t.x = pr.x; t.y = pr.y; t.s = pr.s; t.radius = t.rWorld * pr.s;
   }
 
   update(dt, players) {
@@ -65,13 +92,13 @@ export class Game {
       return;
     }
 
-    // 的：左右に動いて反射、上下にゆらゆら（dyingは止める）
+    // 的：左右に動いてゆらゆら（dyingは止める）。毎フレーム射影して画面座標を更新
     for (const t of this.targets) {
+      if (!t.dying) t.worldX += t.vx * dt;
+      this._projectTarget(t);
       if (!t.dying) {
-        t.x += t.vx * dt;
-        if (t.x < t.radius + 8) { t.x = t.radius + 8; t.vx *= -1; }
-        if (t.x > this.W - t.radius - 8) { t.x = this.W - t.radius - 8; t.vx *= -1; }
-        t.y = t.baseY + t.amp * Math.sin(this._t * 2 + t.phase);
+        if (t.x < t.radius + 8 && t.vx < 0) t.vx *= -1;
+        else if (t.x > this.W - t.radius - 8 && t.vx > 0) t.vx *= -1;
       }
       if (t.pop < 1) t.pop = Math.min(1, t.pop + dt * 4);
     }
@@ -81,25 +108,25 @@ export class Game {
       if (p && p.shoot) this._fire(p, idx);
     });
 
-    // 弾（直線＋ゆるい山。進むほど＝奥へ行くほど小さく）
-    for (const b of this.bullets) b.elapsed += dt;
+    // 弾（前方へ投げ重力で落ちる）。命中なら着弾で得点、外れは落ちて画面外へ
+    for (const b of this.bullets) b.t += dt;
     this.bullets = this.bullets.filter(b => {
       if (b.hit) {
-        if (b.elapsed >= b.T) {                 // 的に届いた瞬間
+        if (b.t >= b.T) {
           this.score += b.points;
           this.audio.playHit();
-          this.flashes.push({ x: b.ex, y: b.ey, r: 6, life: 0.4, color: b.color });
-          this.popups.push({ x: b.ex, y: b.ey, text: `+${b.points}`, color: b.color, life: 0.9, vy: -60 });
+          this.flashes.push({ x: b.exX, y: b.exY, r: 6, life: 0.4, color: b.color });
+          this.popups.push({ x: b.exX, y: b.exY, text: `+${b.points}`, color: b.color, life: 0.9, vy: -60 });
           if (b.deadTarget) {
-            Object.assign(b.deadTarget, spawnTarget(this.W, this.nearY, this.farY));
+            Object.assign(b.deadTarget, spawnTarget(Z_NEAR, Z_FAR, this.laneMax));
             b.deadTarget.dying = false;
           }
           return false;
         }
         return true;
       }
-      const pos = this._ballXY(b);
-      return pos.x > -90 && pos.x < this.W + 90 && pos.y > -90 && pos.y < this.H + 160;
+      const pr = this._ballXY(b);
+      return pr.y < this.H + 160 && pr.x > -120 && pr.x < this.W + 120 && b.t < 2.2;
     });
 
     this.popups = this.popups.filter(pp => (pp.life -= dt) > 0);
@@ -108,40 +135,42 @@ export class Game {
     this.flashes.forEach(f => { f.r += dt * 240; });
   }
 
-  // 1球投げる：床(手前)から的へ、直線＋ゆるい山でまっすぐ平らに。進むほど小さく＝奥へ。
+  // 1球投げる：画面下(手前)から、的の少し上まで上がって重力で落ちてくる弧を描く。
   _fire(p, idx) {
     const color = CONFIG.PLAYER_COLORS[idx] || '#ffffff';
-    const sx = this.W / 2, sy = this.H - 6;       // 投げる位置＝画面下の中央(手前)
-    const ex = p.x, ey = p.y;
-    const dist = Math.hypot(ex - sx, ey - sy) || 1;
-    const T = Math.max(0.22, Math.min(0.5, dist / 1100));
-    // 狙った高さ＝奥行き。手前=1.0倍 / 奥=0.30倍 まで弾が縮む
-    const dAim = Math.max(0, Math.min(1, (this.nearY - ey) / (this.nearY - this.farY)));
-    const endScale = 1 + (0.30 - 1) * dAim;
-
-    const hit = this._hitTest(ex, ey);
+    const hit = this._hitTest(p.x, p.y);
+    const ex = hit ? hit.x : p.x;
+    const ey = hit ? hit.y : p.y;
+    // 奥(小さい的)ほど弾も小さく着弾。手前=1.0 / 奥=その的の縮尺
+    const endScale = Math.max(0.25, Math.min(1, hit ? hit.s : this._invert(p.x, p.y).s));
+    const dist = Math.hypot(ex - this.W / 2, ey - (this.H - 6));
+    const T = Math.max(0.30, Math.min(0.70, 0.30 + dist / 1500));
     this.bullets.push({
-      sx, sy, ex, ey,
-      vx: (ex - sx) / T, vy: (ey - sy) / T,
-      T, elapsed: 0,
-      arc: CONFIG.BULLET_ARC, endScale,
-      color, baseR: CONFIG.BULLET_RADIUS,
+      sx: this.W / 2, sy: this.H - 6, ex, ey,
+      arc: CONFIG.BULLET_ARC, endScale, T, t: 0,
       hit: !!hit, points: hit ? hit.points : 0, deadTarget: hit || null,
+      color, baseR: CONFIG.BULLET_RADIUS, exX: ex, exY: ey,
     });
     if (hit) hit.dying = true;
   }
 
-  // 弾の現在位置（直線移動＋ u=0..1 のあいだだけ sin の山を足す）
-  _ballXY(b) {
-    const t = b.elapsed;
-    const u = Math.min(1, t / b.T);
-    return {
-      x: b.sx + b.vx * t,
-      y: b.sy + b.vy * t - b.arc * Math.sin(Math.PI * u),
-    };
+  // 弾の画面位置：P0=手前下, P1=的の少し上(制御点), P2=的。u>1は的を越えて落下。
+  _ballXY(b, t = b.t) {
+    const u = t / b.T;
+    const cu = Math.min(1, u);
+    const p1x = b.ex, p1y = b.ey - b.arc;       // 制御点＝的の少し上
+    const mu = 1 - cu;
+    const x = mu * mu * b.sx + 2 * mu * cu * p1x + cu * cu * b.ex;
+    const y = mu * mu * b.sy + 2 * mu * cu * p1y + cu * cu * b.ey;
+    if (u <= 1) return { x, y };
+    // 外れ：的を越えてから重力で落ちていく
+    const evy = 2 * (b.ey - p1y); // u=1での下向き速度
+    const k = u - 1;
+    return { x, y: b.ey + evy * k + 420 * k * k };
   }
+
   _ballScale(b) {
-    const u = Math.min(1, b.elapsed / b.T);
+    const u = Math.min(1, b.t / b.T);
     return 1 + (b.endScale - 1) * u;
   }
 
@@ -160,31 +189,28 @@ export class Game {
     const ctx = this.ctx;
     this._drawScene(ctx);
 
-    // 的：奥(小)から先に、手前(大)を後に描く
-    const ordered = [...this.targets].sort((a, b) => a.radius - b.radius);
+    // 的：奥(z大)から先に、手前(z小)を後に描く
+    const ordered = [...this.targets].sort((a, b) => b.z - a.z);
     for (const t of ordered) this._drawTarget(ctx, t);
 
-    // 弾（投げた球。進むほど小さく＝奥へ。立体的な陰影）
+    // 弾（前方へ投げて落ちる球。奥へ行くほど小さく。立体的な陰影＋尾）
     for (const b of this.bullets) {
-      const pos = this._ballXY(b);
+      const cur = this._ballXY(b);
+      const prev = this._ballXY(b, Math.max(0, b.t - 0.04));
       const r = b.baseR * this._ballScale(b);
-      const n = Math.hypot(b.vx, b.vy) || 1;
       ctx.save();
       ctx.lineCap = 'round';
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = b.color;
       ctx.lineWidth = Math.max(2, r * 0.7);
-      ctx.beginPath();
-      ctx.moveTo(pos.x - b.vx / n * r * 2.0, pos.y - b.vy / n * r * 2.0);
-      ctx.lineTo(pos.x, pos.y);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(cur.x, cur.y); ctx.stroke();
       ctx.globalAlpha = 1;
-      const grad = ctx.createRadialGradient(pos.x - r * 0.35, pos.y - r * 0.4, r * 0.1, pos.x, pos.y, r);
+      const grad = ctx.createRadialGradient(cur.x - r * 0.35, cur.y - r * 0.4, r * 0.1, cur.x, cur.y, r);
       grad.addColorStop(0, 'rgba(255,255,255,0.95)');
       grad.addColorStop(0.35, b.color);
       grad.addColorStop(1, 'rgba(0,0,0,0.45)');
       ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cur.x, cur.y, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -220,7 +246,6 @@ export class Game {
   _drawTarget(ctx, t) {
     const r = t.radius * (0.65 + 0.35 * t.pop);
     ctx.save();
-    // 影
     ctx.globalAlpha = 0.22;
     ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.ellipse(t.x, t.y + r * 0.95, r * 0.8, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
@@ -235,8 +260,8 @@ export class Game {
       ctx.lineWidth = 3; ctx.strokeStyle = '#fff';
       ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.stroke();
     } else {
-      const d = Number.isFinite(t.d) ? t.d : 0;
-      const col = `hsl(${Math.round(d * 210)}, 75%, 58%)`; // 手前=赤 .. 奥=青
+      const dn = Number.isFinite(t.dn) ? t.dn : 0;
+      const col = `hsl(${Math.round(dn * 210)}, 75%, 58%)`; // 手前=赤 .. 奥=青
       const g = ctx.createRadialGradient(t.x - r * 0.3, t.y - r * 0.3, r * 0.1, t.x, t.y, r);
       g.addColorStop(0, '#ffffff');
       g.addColorStop(0.25, col);
@@ -257,51 +282,54 @@ export class Game {
     ctx.restore();
   }
 
-  // 部屋シーン（手前=木の床／奥=雲の壁）。距離感の土台。
+  // 部屋シーン（手前=木の床／奥=雲の壁、床は消失点へ伸びる）
   _drawScene(ctx) {
-    const W = this.W, H = this.H, floorY = this.floorY;
+    const W = this.W, H = this.H, horizonY = this.horizonY;
     if (this.bgImage) {
       const iw = this.bgImage.width, ih = this.bgImage.height;
       const s = Math.max(W / iw, H / ih);
-      const dw = iw * s, dh = ih * s;
-      ctx.drawImage(this.bgImage, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.drawImage(this.bgImage, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
       return;
     }
+    // 壁（雲の空）
     ctx.fillStyle = '#5db4d4';
-    ctx.fillRect(0, 0, W, floorY);
-    this._drawClouds(ctx, W, floorY);
+    ctx.fillRect(0, 0, W, horizonY);
+    this._drawClouds(ctx, W, horizonY);
+    // 巾木
     ctx.fillStyle = '#eef3f6';
-    ctx.fillRect(0, floorY - 12, W, 16);
-    const fg = ctx.createLinearGradient(0, floorY, 0, H);
-    fg.addColorStop(0, '#d4a86b');
-    fg.addColorStop(1, '#9a6a36');
+    ctx.fillRect(0, horizonY - 8, W, 12);
+    // 床（消失点へ伸びる木目）
+    const fg = ctx.createLinearGradient(0, horizonY, 0, H);
+    fg.addColorStop(0, '#caa066');
+    fg.addColorStop(1, '#8f6230');
     ctx.fillStyle = fg;
-    ctx.fillRect(0, floorY, W, H - floorY);
+    ctx.fillRect(0, horizonY, W, H - horizonY);
     ctx.save();
-    ctx.strokeStyle = 'rgba(70,45,18,0.30)';
+    ctx.strokeStyle = 'rgba(70,45,18,0.28)';
     ctx.lineWidth = 2;
-    const vpx = W / 2, vpy = floorY - 220;
-    for (let i = -9; i <= 9; i++) {
+    const vpx = W / 2;
+    for (let i = -10; i <= 10; i++) {
       const bx = W / 2 + i * (W / 7);
-      ctx.beginPath(); ctx.moveTo(vpx, vpy); ctx.lineTo(bx, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(vpx, horizonY); ctx.lineTo(bx, H); ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(70,45,18,0.18)';
-    for (let k = 1; k <= 4; k++) {
-      const y = floorY + (H - floorY) * (k / 5);
+    ctx.strokeStyle = 'rgba(70,45,18,0.16)';
+    for (let k = 1; k <= 5; k++) {
+      const s = k / 6;                          // 奥(消失点)に向かって間隔が詰まる
+      const y = horizonY + (H - horizonY) * (s * s);
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
     ctx.restore();
   }
 
-  _drawClouds(ctx, W, floorY) {
+  _drawClouds(ctx, W, wallBottom) {
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    const cols = 7, rows = 4;
+    const cols = 7, rows = 3;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = (c + (r % 2 ? 0.5 : 0)) * (W / cols) + 20;
-        const y = 36 + r * (floorY / (rows + 0.5));
-        this._cloud(ctx, x, y, 30 + (r % 2 ? 8 : 0));
+        const y = 34 + r * (wallBottom / (rows + 0.3));
+        this._cloud(ctx, x, y, 28 + (r % 2 ? 8 : 0));
       }
     }
     ctx.restore();

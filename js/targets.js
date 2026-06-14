@@ -1,35 +1,28 @@
 // ============================================================
-//  的（ターゲット）の生成
-//  奥行き d を 0=手前(近い) .. 1=奥(遠い) の連続値で持たせます。
-//  手前ほど 大きい・低い位置・低得点・ゆっくり。
-//  奥ほど   小さい・高い位置・高得点・速い（狙うのが難しい）。
-//  → 一番手前の的から、その奥にも的が並ぶ「距離のある的の列」になります。
+//  的（ターゲット）の生成（擬似3D：奥行き z を持つ）
+//  z = 0 が一番手前(近い), z が大きいほど奥(遠い)。
+//  的は床から一定の高さ(hFloat)に浮かび、奥ほど小さく・高い位置・高得点に見えます。
+//  画面座標(x,y,radius)は game 側で毎フレーム「遠近法で射影」して埋めます。
 // ============================================================
 
-export const NEAR_SIZE = 124; // 一番手前の的の大きさ(px)
-export const FAR_SIZE = 46;   // 一番奥の的の大きさ(px)
+export const R_WORLD = 84;   // 的の基準サイズ（手前での半径の元）
 
-// 的を生成。nearY/farY は「手前/奥」の的が浮かぶ画面上の高さ(px)。
-export function spawnTarget(W, nearY, farY) {
-  const d = Math.random();                       // 0=手前 .. 1=奥
-  const size = NEAR_SIZE + (FAR_SIZE - NEAR_SIZE) * d;
-  const radius = size / 2;
-  const spread = 0.92 + (0.5 - 0.92) * d;        // 奥ほど横幅が狭まる(消失点へ)
-  const margin = radius + 12;
-  const baseY = nearY + (farY - nearY) * d;
-  let x = W / 2 + (Math.random() - 0.5) * W * spread;
-  x = Math.max(margin, Math.min(W - margin, x));
+// 的を生成。zNear〜zFar の範囲に奥行きを散らし、laneMax で左右の広がりを決める。
+export function spawnTarget(zNear, zFar, laneMax) {
+  const z = zNear + Math.random() * (zFar - zNear);
+  const dn = (z - zNear) / ((zFar - zNear) || 1); // 0=手前 .. 1=奥
   return {
-    d, size, radius,
-    points: Math.round(10 + d * 40),             // 奥ほど高得点(10〜50)
-    x,
-    baseY,
-    y: baseY,
-    vx: (Math.random() < 0.5 ? -1 : 1) * (55 + d * 120), // 奥ほど速い
-    amp: 5 + Math.random() * 12,                 // 上下のゆらぎ
+    z,
+    worldX: (Math.random() * 2 - 1) * laneMax,
+    vx: (Math.random() < 0.5 ? -1 : 1) * (90 + dn * 150), // 奥ほど速い（ワールド速度）
+    rWorld: R_WORLD,
+    points: Math.round(10 + dn * 40),  // 奥ほど高得点(10〜50)
+    amp: 4 + Math.random() * 10,       // 上下のゆらぎ（ワールド高さ）
     phase: Math.random() * Math.PI * 2,
     imgIndex: Math.floor(Math.random() * 6),
+    dn,
     pop: 0,
     dying: false,
+    x: 0, y: 0, radius: R_WORLD, s: 1, // 射影結果（game側で更新）
   };
 }
