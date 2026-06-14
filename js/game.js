@@ -1,5 +1,5 @@
 // ============================================================
-//  ゲーム本体：的の動き・発射・弾・当たり判定・スコア・タイマー・描画
+//  ゲーム本体：的の動き・発射・弾(放物線)・当たり判定・スコア・タイマー・描画
 //  入力方式(カメラ/マウス/タップ)に依存しません。
 //  毎フレーム players = [{x, y, shoot, visible}] を受け取って動きます。
 // ============================================================
@@ -14,7 +14,7 @@ export class Game {
     this.ctx = canvas.getContext('2d');
     this.audio = audio;
     this.targets = [];
-    this.bullets = [];  // 発射された弾（見える）
+    this.bullets = [];  // 投げた弾（放物線で飛ぶ・見える）
     this.popups = [];   // 「+20」などの浮き上がる得点表示
     this.flashes = [];  // 命中の波紋
     this.score = 0;
@@ -53,31 +53,48 @@ export class Game {
       return;
     }
 
-    // 的の移動（壁で反射）＋出現アニメ
+    // 的の移動（壁で反射）＋出現アニメ。命中待ち(dying)の的は止める
     for (const t of this.targets) {
-      t.x += t.vx * dt;
-      t.y += t.vy * dt;
-      if (t.x < t.radius) { t.x = t.radius; t.vx *= -1; }
-      if (t.x > this.W - t.radius) { t.x = this.W - t.radius; t.vx *= -1; }
-      if (t.y < t.radius) { t.y = t.radius; t.vy *= -1; }
-      if (t.y > this.H - t.radius) { t.y = this.H - t.radius; t.vy *= -1; }
+      if (!t.dying) {
+        t.x += t.vx * dt;
+        t.y += t.vy * dt;
+        if (t.x < t.radius) { t.x = t.radius; t.vx *= -1; }
+        if (t.x > this.W - t.radius) { t.x = this.W - t.radius; t.vx *= -1; }
+        if (t.y < t.radius) { t.y = t.radius; t.vy *= -1; }
+        if (t.y > this.H - t.radius) { t.y = this.H - t.radius; t.vy *= -1; }
+      }
       if (t.pop < 1) t.pop = Math.min(1, t.pop + dt * 4);
     }
 
-    // 発射（グー or タップ/クリックのたびに必ず弾を出す）
+    // 発射（グー or タップ/クリックのたびに必ず弾を投げる）
     players.forEach((p, idx) => {
       if (p && p.shoot) this._fire(p, idx);
     });
 
-    // 弾の移動と消滅
+    // 弾の物理（重力で放物線）と着弾・消滅
     for (const b of this.bullets) {
+      b.elapsed += dt;
+      b.vy += b.g * dt;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      b.traveled += Math.hypot(b.vx, b.vy) * dt;
     }
     this.bullets = this.bullets.filter(b => {
-      if (b.hit) return b.traveled < b.maxDist;             // 命中弾は的の位置で消える
-      return b.x > -60 && b.x < this.W + 60 && b.y > -60 && b.y < this.H + 60; // 外れ弾は画面外で消える
+      if (b.hit) {
+        if (b.elapsed >= b.T) {          // 的に着弾した瞬間
+          this.score += b.points;
+          this.audio.playHit();
+          this.flashes.push({ x: b.tx, y: b.ty, r: 6, life: 0.35, color: b.color });
+          this.popups.push({ x: b.tx, y: b.ty, text: `+${b.points}`, color: b.color, life: 0.9, vy: -60 });
+          if (b.deadTarget) {
+            Object.assign(b.deadTarget, spawnTarget(this.W, this.H)); // 的を入れ替え
+            b.deadTarget.dying = false;                                // 命中待ち状態を解除
+          }
+          return false;
+        }
+        return true;
+      }
+      // 外れ弾はそのまま飛んで画面外で消える
+      return b.x > -80 && b.x < this.W + 80 && b.y > -80 && b.y < this.H + 140;
     });
 
     // 演出の寿命更新
@@ -87,39 +104,36 @@ export class Game {
     this.flashes.forEach(f => { f.r += dt * 220; });
   }
 
-  // 1発撃つ：必ず見える弾を出し、当たり判定して命中なら得点
+  // 1発投げる：画面下から放物線で飛ばす。命中ならその的に着弾、外れなら飛び去る
   _fire(p, idx) {
     const color = CONFIG.PLAYER_COLORS[idx] || '#ffffff';
-    const mx = this.W / 2, my = this.H + 10; // 発射口＝画面下の中央
-    const dist = Math.hypot(p.x - mx, p.y - my) || 1;
-    const speed = CONFIG.BULLET_SPEED;
+    const mx = this.W / 2, my = this.H + 10;   // 発射口＝画面下の中央
+    const dx = p.x - mx, dy = p.y - my;
+    const dist = Math.hypot(dx, dy) || 1;
+    const g = CONFIG.BULLET_GRAVITY;
+    const T = Math.max(0.22, Math.min(0.5, dist / 1500)); // 飛行時間（遠いほど長い）
+    // 時刻Tで照準点(p.x,p.y)に届くよう初速を計算（重力つき放物線）
+    const vx = dx / T;
+    const vy = (dy - 0.5 * g * T * T) / T;
+
     const hit = this._hitTest(p.x, p.y);
+    const bullet = {
+      x: mx, y: my, vx, vy, g, elapsed: 0, T,
+      color, baseR: CONFIG.BULLET_RADIUS,
+      hit: !!hit, tx: p.x, ty: p.y,
+      points: hit ? hit.points : 0,
+      deadTarget: hit || null,
+    };
+    this.bullets.push(bullet);
 
-    this.bullets.push({
-      x: mx, y: my,
-      vx: (p.x - mx) / dist * speed,
-      vy: (p.y - my) / dist * speed,
-      traveled: 0,
-      maxDist: dist,            // 命中弾は照準の位置(=的)で止まる
-      hit: !!hit,
-      color,
-    });
-
-    if (hit) {
-      this.score += hit.points;
-      this.audio.playHit();
-      // 命中エフェクト（波紋＋得点表示）
-      this.flashes.push({ x: p.x, y: p.y, r: 6, life: 0.35, color });
-      this.popups.push({ x: p.x, y: p.y, text: `+${hit.points}`, color, life: 0.9, vy: -60 });
-      // 当たった的は別の場所へ新しく出現
-      Object.assign(hit, spawnTarget(this.W, this.H));
-    }
+    if (hit) { hit.dying = true; hit.vx = 0; hit.vy = 0; } // 着弾まで的をその場で待たせる
   }
 
   // 照準(x,y)の当たり判定。的の中心が HIT_RADIUS 以内なら命中（一番近いもの）
   _hitTest(x, y) {
     let best = null, bestD = Infinity;
     for (const t of this.targets) {
+      if (t.dying) continue; // 命中待ちの的は二重に当てない
       const d = Math.hypot(t.x - x, t.y - y);
       if (d <= CONFIG.HIT_RADIUS && d < bestD) { best = t; bestD = d; }
     }
@@ -132,7 +146,7 @@ export class Game {
 
     // 的
     for (const t of this.targets) {
-      const s = 0.6 + 0.4 * t.pop; // 出現時に少し拡大
+      const s = 0.6 + 0.4 * t.pop;
       const r = t.radius * s;
       ctx.save();
       ctx.beginPath();
@@ -144,6 +158,16 @@ export class Game {
       ctx.lineWidth = 4;
       ctx.strokeStyle = t.type.color;
       ctx.stroke();
+      // 命中待ちの的は白いリングで「狙われている」表示
+      if (t.dying) {
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, r + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.font = `${Math.round(r * 1.3)}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -151,23 +175,29 @@ export class Game {
       ctx.restore();
     }
 
-    // 弾（見える）
+    // 弾（投げた球。上=遠くにいくほど小さく描画）
     for (const b of this.bullets) {
+      const scale = Math.max(0.3, Math.min(1, 0.3 + 0.7 * (b.y / this.H)));
+      const r = b.baseR * scale;
       const n = Math.hypot(b.vx, b.vy) || 1;
       ctx.save();
       ctx.lineCap = 'round';
-      ctx.lineWidth = 4;
+      ctx.globalAlpha = 0.4;
       ctx.strokeStyle = b.color;
-      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = Math.max(2, r * 0.8);
       ctx.beginPath();
-      ctx.moveTo(b.x - b.vx / n * 22, b.y - b.vy / n * 22); // 尾を引く
+      ctx.moveTo(b.x - b.vx / n * r * 1.8, b.y - b.vy / n * r * 1.8);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = b.color;
-      ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.arc(b.x - r * 0.3, b.y - r * 0.3, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 

@@ -10,18 +10,21 @@ export const CONFIG = {
   COUNTDOWN_FROM: 3,        // 開始前のカウントダウン（3,2,1）
 
   // --- 操作・狙いの感触 ---
-  SHOOT_COOLDOWN_MS: 350,   // 連射しすぎ防止（1発ごとの待ち時間ミリ秒）
+  SHOOT_COOLDOWN_MS: 150,   // 連射しすぎ防止（小さいほど速く連打できる。ミリ秒）
   SENSITIVITY_DEFAULT: 0.45, // 照準の追従の強さ(0.2=なめらか/ゆっくり .. 0.8=機敏/プルプル)
-  GESTURE_SCORE_MIN: 0.55,  // 「グー」と判定する自信のしきい値(0〜1)
+  GESTURE_SCORE_MIN: 0.5,   // 「グー」と判定する自信のしきい値(0〜1)。小さいほど速く反応（誤爆も増）
   CROSSHAIR_HOLD_MS: 500,   // 手を見失っても照準を保持する時間（ミリ秒）
 
   // --- 当たり判定とカーソルの大きさ（ここで難易度を調整）---
   // HIT_RADIUS を小さくするほど、より正確に狙う必要があり難しくなります。
   // CROSSHAIR_RADIUS は見た目のカーソルの大きさ。HIT_RADIUS と同じ値にすると
   // 「画面の丸の中に的の中心が入れば命中」＝見た目＝当たる範囲、になります。
-  HIT_RADIUS: 42,           // 当たり判定の半径(px)。小さく＝難しい
-  CROSSHAIR_RADIUS: 42,     // カーソルの半径(px)。HIT_RADIUSと同じ推奨
-  BULLET_SPEED: 2600,       // 弾の速さ(px/秒)
+  HIT_RADIUS: 21,           // 当たり判定の半径(px)。小さく＝難しい
+  CROSSHAIR_RADIUS: 21,     // カーソルの半径(px)。HIT_RADIUSと同じ推奨
+
+  // --- 弾（投げる球）の物理 ---
+  BULLET_GRAVITY: 3000,     // 重力(px/秒²)。大きいほど放物線が強く曲がる
+  BULLET_RADIUS: 13,        // 弾の基準サイズ。遠ざかる(上にいく)ほど小さく描画されます
 
   // --- ランキング ---
   RANKING_KEY: 'wii_ranking_v1',
