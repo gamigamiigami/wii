@@ -24,7 +24,7 @@ export const CONFIG = {
 
   // --- 弾（投げる球）の物理 ---
   BULLET_GRAVITY: 3000,     // 重力(px/秒²)。大きいほど放物線が強く曲がる
-  BULLET_RADIUS: 13,        // 弾の基準サイズ。遠ざかる(上にいく)ほど小さく描画されます
+  BULLET_RADIUS: 16,        // 弾の基準サイズ(手前)。奥にいくほど小さく描画されます
 
   // --- ランキング ---
   RANKING_KEY: 'wii_ranking_v1',
