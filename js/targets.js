@@ -1,45 +1,32 @@
 // ============================================================
-//  的（ターゲット）の種類と生成
-//  距離感は「大きさ」で表現：大きい=近い=低得点 / 小さい=遠い=高得点。
-//  元のトイ・ストーリー版と同じ考え方（小さく速い的ほど高得点）。
-//  的は「壁(奥)」の領域に浮かび、ゆらゆら上下＋左右に動きます。
+//  的（ターゲット）の生成
+//  奥行き d を 0=手前(近い) .. 1=奥(遠い) の連続値で持たせます。
+//  手前ほど 大きい・低い位置・低得点・ゆっくり。
+//  奥ほど   小さい・高い位置・高得点・速い（狙うのが難しい）。
+//  → 一番手前の的から、その奥にも的が並ぶ「距離のある的の列」になります。
 // ============================================================
 
-export const TARGET_TIERS = [
-  { size: 128, points: 10, speed: 70,  weight: 3 }, // 近い・大きい・低得点
-  { size: 92,  points: 20, speed: 110, weight: 4 }, // 中くらい
-  { size: 62,  points: 40, speed: 155, weight: 2 }, // 遠い・小さい・高得点（狙うのが難しい）
-];
+export const NEAR_SIZE = 124; // 一番手前の的の大きさ(px)
+export const FAR_SIZE = 46;   // 一番奥の的の大きさ(px)
 
-function pickTierIndex() {
-  const total = TARGET_TIERS.reduce((s, t) => s + t.weight, 0);
-  let r = Math.random() * total;
-  for (let i = 0; i < TARGET_TIERS.length; i++) {
-    r -= TARGET_TIERS[i].weight;
-    if (r <= 0) return i;
-  }
-  return 0;
-}
-
-// 的を生成。wallTop〜wallBottom は的が浮かぶ「壁」領域の上下端(px)。
-export function spawnTarget(W, wallTop, wallBottom) {
-  const ti = pickTierIndex();
-  const tier = TARGET_TIERS[ti];
-  const radius = tier.size / 2;
-  const margin = radius + 14;
-  const top = wallTop + radius;
-  const bottom = Math.max(top + 1, wallBottom - radius);
-  const baseY = top + Math.random() * (bottom - top);
+// 的を生成。nearY/farY は「手前/奥」の的が浮かぶ画面上の高さ(px)。
+export function spawnTarget(W, nearY, farY) {
+  const d = Math.random();                       // 0=手前 .. 1=奥
+  const size = NEAR_SIZE + (FAR_SIZE - NEAR_SIZE) * d;
+  const radius = size / 2;
+  const spread = 0.92 + (0.5 - 0.92) * d;        // 奥ほど横幅が狭まる(消失点へ)
+  const margin = radius + 12;
+  const baseY = nearY + (farY - nearY) * d;
+  let x = W / 2 + (Math.random() - 0.5) * W * spread;
+  x = Math.max(margin, Math.min(W - margin, x));
   return {
-    tierIndex: ti,
-    size: tier.size,
-    radius,
-    points: tier.points,
-    x: margin + Math.random() * (W - margin * 2),
+    d, size, radius,
+    points: Math.round(10 + d * 40),             // 奥ほど高得点(10〜50)
+    x,
     baseY,
     y: baseY,
-    vx: (Math.random() < 0.5 ? -1 : 1) * tier.speed,
-    amp: 6 + Math.random() * 14,       // 上下のゆらぎ幅
+    vx: (Math.random() < 0.5 ? -1 : 1) * (55 + d * 120), // 奥ほど速い
+    amp: 5 + Math.random() * 12,                 // 上下のゆらぎ
     phase: Math.random() * Math.PI * 2,
     imgIndex: Math.floor(Math.random() * 6),
     pop: 0,
