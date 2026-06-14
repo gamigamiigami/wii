@@ -10,8 +10,8 @@ import { CONFIG } from './config.js';
 import { spawnTarget } from './targets.js';
 import { drawCrosshair } from './crosshair.js';
 
-const Z_NEAR = 0.12;          // 一番手前の的の奥行き
-const Z_FAR = 2.6;            // 一番奥の的の奥行き
+const Z_NEAR = 0.45;          // 一番手前の的の奥行き（プレイヤーから少し離れた所から的エリア）
+const Z_FAR = 3.0;            // 一番奥の的の奥行き
 
 export class Game {
   constructor(canvas, audio) {
@@ -106,17 +106,22 @@ export class Game {
       if (p && p.shoot) this._fire(p, idx);
     });
 
-    // 弾：弧を描いて飛ぶ。飛行中の弾が「動いている的」に当たった瞬間だけ命中。
-    //     当たらなければそのまま落ちて(前に落ちる/通り過ぎる)画面外で消える。
+    // 弾：弧を描いて飛ぶ。当たるのは「頂点を越えて落下し始めてから(下降中)」だけ。
+    //     ＝上昇中は手前の的を飛び越え、下降してきて的に当たる。外れたら落ちて消える。
     for (const b of this.bullets) b.t += dt;
     const survivors = [];
     for (const b of this.bullets) {
       const pos = this._ballXY(b);
+      const prev = this._ballXY(b, Math.max(0, b.t - dt));
+      const descending = pos.y > prev.y + 0.01;   // 下降中(重力で落ち始めた)か
+      const u = b.t / b.T;
       const br = b.baseR * this._ballScale(b);
       let hitT = null, bestD = Infinity;
-      for (const t of this.targets) {
-        const d = Math.hypot(pos.x - t.x, pos.y - t.y);
-        if (d <= t.radius + br * 0.5 && d < bestD) { hitT = t; bestD = d; }
+      if (descending && u < 1.3) {                // 下降中の一定区間だけ当たり判定
+        for (const t of this.targets) {
+          const d = Math.hypot(pos.x - t.x, pos.y - t.y);
+          if (d <= t.radius + br * 0.5 && d < bestD) { hitT = t; bestD = d; }
+        }
       }
       if (hitT) {
         this.score += hitT.points;
