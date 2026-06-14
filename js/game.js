@@ -154,9 +154,10 @@ export class Game {
     const worldXT = aim.worldX * (1 + zT) / (1 + zc); // 着地点の画面x＝カーソルxに合わせる
     const g = CONFIG.BULLET_GRAVITY;
     const T = Math.max(0.34, Math.min(0.95, 0.34 + zT * 0.16)); // 奥ほど時間がかかる＝先読み必要
+    const worldX0 = p.x - this.W / 2;              // 手の位置(カーソルX)の真下から発射＝右の人は右から
     this.bullets.push({
-      h0: this.hFloat,                             // 投げ出しの高さ＝的の高さ
-      vlane: worldXT / T, vz: zT / T, vh0: 0.5 * g * T, // h0=hFloatなので着弾(t=T)でまたhFloat
+      worldX0, h0: this.hFloat,                    // 投げ出し位置（手の側）＋高さ＝的の高さ
+      vlane: (worldXT - worldX0) / T, vz: zT / T, vh0: 0.5 * g * T,
       g, t: 0, T, color, baseR: CONFIG.BULLET_RADIUS,
     });
   }
@@ -164,7 +165,7 @@ export class Game {
   // 弾の状態（ワールド物理→画面）。h=高さ：両端で hFloat、飛行中はその上。
   _ballState(b, t = b.t) {
     const z = b.vz * t;
-    const worldX = b.vlane * t;
+    const worldX = (b.worldX0 || 0) + b.vlane * t;
     const h = b.h0 + b.vh0 * t - 0.5 * b.g * t * t;
     const pr = this._project(worldX, z, h);
     return { x: pr.x, y: pr.y, s: pr.s, z, worldX, h };
