@@ -1,40 +1,48 @@
 // ============================================================
 //  的（ターゲット）の種類と生成
-//  奥行き(z)を持たせて、遠近法で「奥にある＝小さい」を表現します。
-//  z = 0 が一番奥（遠い）, z = 1 が手前（近い）。
-//  ※ 文化祭で誰でも当てられるよう、的は大きめ・色わかりやすめにしています。
+//  距離感は「大きさ」で表現：大きい=近い=低得点 / 小さい=遠い=高得点。
+//  元のトイ・ストーリー版と同じ考え方（小さく速い的ほど高得点）。
+//  的は「壁(奥)」の領域に浮かび、ゆらゆら上下＋左右に動きます。
 // ============================================================
 
-export const TARGET_TYPES = [
-  { name: 'balloon', emoji: '🎈', color: '#ff6f91', radius: 64, points: 10, speed: 80,  weight: 4 },
-  { name: 'apple',   emoji: '🍎', color: '#ff4d4d', radius: 54, points: 20, speed: 120, weight: 3 },
-  { name: 'star',    emoji: '⭐', color: '#ffd23b', radius: 46, points: 30, speed: 165, weight: 2 },
-  { name: 'ufo',     emoji: '🛸', color: '#67c7ff', radius: 40, points: 50, speed: 210, weight: 1 },
+export const TARGET_TIERS = [
+  { size: 128, points: 10, speed: 70,  weight: 3 }, // 近い・大きい・低得点
+  { size: 92,  points: 20, speed: 110, weight: 4 }, // 中くらい
+  { size: 62,  points: 40, speed: 155, weight: 2 }, // 遠い・小さい・高得点（狙うのが難しい）
 ];
 
-// 出現確率の重み付き抽選で種類を1つ選ぶ
-export function pickType() {
-  const total = TARGET_TYPES.reduce((s, t) => s + t.weight, 0);
+function pickTierIndex() {
+  const total = TARGET_TIERS.reduce((s, t) => s + t.weight, 0);
   let r = Math.random() * total;
-  for (const t of TARGET_TYPES) {
-    r -= t.weight;
-    if (r <= 0) return t;
+  for (let i = 0; i < TARGET_TIERS.length; i++) {
+    r -= TARGET_TIERS[i].weight;
+    if (r <= 0) return i;
   }
-  return TARGET_TYPES[0];
+  return 0;
 }
 
-// 的を新しい場所・奥行き・速度で初期化する（奥行きは「後ろ寄り」に分布）
-export function spawnTarget() {
-  const type = pickType();
+// 的を生成。wallTop〜wallBottom は的が浮かぶ「壁」領域の上下端(px)。
+export function spawnTarget(W, wallTop, wallBottom) {
+  const ti = pickTierIndex();
+  const tier = TARGET_TIERS[ti];
+  const radius = tier.size / 2;
+  const margin = radius + 14;
+  const top = wallTop + radius;
+  const bottom = Math.max(top + 1, wallBottom - radius);
+  const baseY = top + Math.random() * (bottom - top);
   return {
-    type,
-    fx: 0.1 + Math.random() * 0.8,   // 横位置(0..1)
-    z: 0.05 + Math.random() * 0.55,  // 奥行き(0=遠..1=近) → 主に奥に置いて距離感を出す
-    vfx: (Math.random() < 0.5 ? -1 : 1) * (0.05 + Math.random() * 0.13), // 横移動(1秒あたり)
-    points: type.points,
+    tierIndex: ti,
+    size: tier.size,
+    radius,
+    points: tier.points,
+    x: margin + Math.random() * (W - margin * 2),
+    baseY,
+    y: baseY,
+    vx: (Math.random() < 0.5 ? -1 : 1) * tier.speed,
+    amp: 6 + Math.random() * 14,       // 上下のゆらぎ幅
+    phase: Math.random() * Math.PI * 2,
+    imgIndex: Math.floor(Math.random() * 6),
     pop: 0,
     dying: false,
-    // x, y, radius, scale はゲーム側で毎フレーム遠近法で計算して埋めます
-    x: 0, y: 0, radius: type.radius, scale: 1,
   };
 }
