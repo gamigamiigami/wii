@@ -18,6 +18,20 @@ const video = $('cam');
 const audio = new AudioManager();
 const game = new Game(canvas, audio);
 const tracker = new HandTracker();
+
+// 任意：assets/ に背景や的の画像があれば自動で使う（無ければコードで描画）
+(function loadArt() {
+  const load = (src) => new Promise((res) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => res(null);
+    im.src = src;
+  });
+  load('assets/background.jpg').then((im) => { if (im) game.bgImage = im; });
+  for (let i = 1; i <= 6; i++) {
+    load(`assets/target${i}.png`).then((im) => { if (im) game.targetImages[i - 1] = im; });
+  }
+})();
 const sm = new StateMachine(STATES.TITLE);
 
 const session = {
@@ -84,7 +98,7 @@ function loop(now) {
   }
 
   const ctx = game.ctx;
-  game._drawBackground(ctx);
+  game._drawScene(ctx);
 
   if (sm.is(STATES.CALIB)) {
     renderCalib(ctx);
