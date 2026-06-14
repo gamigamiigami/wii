@@ -15,6 +15,14 @@ export const CONFIG = {
   GESTURE_SCORE_MIN: 0.55,  // 「グー」と判定する自信のしきい値(0〜1)
   CROSSHAIR_HOLD_MS: 500,   // 手を見失っても照準を保持する時間（ミリ秒）
 
+  // --- 当たり判定とカーソルの大きさ（ここで難易度を調整）---
+  // HIT_RADIUS を小さくするほど、より正確に狙う必要があり難しくなります。
+  // CROSSHAIR_RADIUS は見た目のカーソルの大きさ。HIT_RADIUS と同じ値にすると
+  // 「画面の丸の中に的の中心が入れば命中」＝見た目＝当たる範囲、になります。
+  HIT_RADIUS: 42,           // 当たり判定の半径(px)。小さく＝難しい
+  CROSSHAIR_RADIUS: 42,     // カーソルの半径(px)。HIT_RADIUSと同じ推奨
+  BULLET_SPEED: 2600,       // 弾の速さ(px/秒)
+
   // --- ランキング ---
   RANKING_KEY: 'wii_ranking_v1',
   RANKING_KEEP: 50,         // 保存しておく件数

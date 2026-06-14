@@ -21,27 +21,28 @@ export class Smoother {
   reset() { this.x = null; this.y = null; }
 }
 
-// 照準を描く（プレイヤー色の丸い的マーク）
-export function drawCrosshair(ctx, x, y, color, opacity = 1) {
+// 照準を描く。radius がそのまま「当たる範囲」の大きさになります。
+export function drawCrosshair(ctx, x, y, color, radius, opacity = 1) {
+  const r = radius;
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 3;
   ctx.strokeStyle = color;
-  // 外円
+  // 当たり判定とぴったり同じ大きさの円
   ctx.beginPath();
-  ctx.arc(x, y, 26, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.stroke();
-  // 十字
+  // 外側の小さな十字マーク
   ctx.beginPath();
-  ctx.moveTo(x - 34, y); ctx.lineTo(x - 12, y);
-  ctx.moveTo(x + 12, y); ctx.lineTo(x + 34, y);
-  ctx.moveTo(x, y - 34); ctx.lineTo(x, y - 12);
-  ctx.moveTo(x, y + 12); ctx.lineTo(x, y + 34);
+  [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+    ctx.moveTo(x + dx * (r + 3), y + dy * (r + 3));
+    ctx.lineTo(x + dx * (r + 11), y + dy * (r + 11));
+  });
   ctx.stroke();
   // 中心点
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.arc(x, y, 3, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }

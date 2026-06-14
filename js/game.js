@@ -1,6 +1,6 @@
 // ============================================================
-//  ゲーム本体：的の動き・当たり判定・スコア・タイマー・描画
-//  入力方式(カメラ/マウス)に依存しません。
+//  ゲーム本体：的の動き・発射・弾・当たり判定・スコア・タイマー・描画
+//  入力方式(カメラ/マウス/タップ)に依存しません。
 //  毎フレーム players = [{x, y, shoot, visible}] を受け取って動きます。
 // ============================================================
 
@@ -14,8 +14,9 @@ export class Game {
     this.ctx = canvas.getContext('2d');
     this.audio = audio;
     this.targets = [];
+    this.bullets = [];  // 発射された弾（見える）
     this.popups = [];   // 「+20」などの浮き上がる得点表示
-    this.flashes = [];  // 発射時の波紋
+    this.flashes = [];  // 命中の波紋
     this.score = 0;
     this.timeLeft = CONFIG.GAME_DURATION;
     this.mode = '1P';
@@ -30,6 +31,7 @@ export class Game {
     this.mode = mode;
     this.score = 0;
     this.timeLeft = CONFIG.GAME_DURATION;
+    this.bullets = [];
     this.popups = [];
     this.flashes = [];
     this.targets = [];
@@ -62,36 +64,64 @@ export class Game {
       if (t.pop < 1) t.pop = Math.min(1, t.pop + dt * 4);
     }
 
-    // 発射と当たり判定
+    // 発射（グー or タップ/クリックのたびに必ず弾を出す）
     players.forEach((p, idx) => {
-      if (!p || !p.shoot) return;
-      this.flashes.push({ x: p.x, y: p.y, r: 10, life: 0.3, color: CONFIG.PLAYER_COLORS[idx] || '#fff' });
-      const hit = this._hitTest(p.x, p.y);
-      if (hit) {
-        this.score += hit.points;
-        this.audio.playHit();
-        this.popups.push({
-          x: hit.x, y: hit.y, text: `+${hit.points}`,
-          color: CONFIG.PLAYER_COLORS[idx] || '#fff', life: 0.9, vy: -60,
-        });
-        // 当たった的は別の場所に新しく出現
-        Object.assign(hit, spawnTarget(this.W, this.H));
-      }
+      if (p && p.shoot) this._fire(p, idx);
+    });
+
+    // 弾の移動と消滅
+    for (const b of this.bullets) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.traveled += Math.hypot(b.vx, b.vy) * dt;
+    }
+    this.bullets = this.bullets.filter(b => {
+      if (b.hit) return b.traveled < b.maxDist;             // 命中弾は的の位置で消える
+      return b.x > -60 && b.x < this.W + 60 && b.y > -60 && b.y < this.H + 60; // 外れ弾は画面外で消える
     });
 
     // 演出の寿命更新
     this.popups = this.popups.filter(pp => (pp.life -= dt) > 0);
     this.popups.forEach(pp => { pp.y += pp.vy * dt; });
     this.flashes = this.flashes.filter(f => (f.life -= dt) > 0);
-    this.flashes.forEach(f => { f.r += dt * 160; });
+    this.flashes.forEach(f => { f.r += dt * 220; });
   }
 
-  // 照準(x,y)に重なっている的のうち、中心が一番近いものを返す
+  // 1発撃つ：必ず見える弾を出し、当たり判定して命中なら得点
+  _fire(p, idx) {
+    const color = CONFIG.PLAYER_COLORS[idx] || '#ffffff';
+    const mx = this.W / 2, my = this.H + 10; // 発射口＝画面下の中央
+    const dist = Math.hypot(p.x - mx, p.y - my) || 1;
+    const speed = CONFIG.BULLET_SPEED;
+    const hit = this._hitTest(p.x, p.y);
+
+    this.bullets.push({
+      x: mx, y: my,
+      vx: (p.x - mx) / dist * speed,
+      vy: (p.y - my) / dist * speed,
+      traveled: 0,
+      maxDist: dist,            // 命中弾は照準の位置(=的)で止まる
+      hit: !!hit,
+      color,
+    });
+
+    if (hit) {
+      this.score += hit.points;
+      this.audio.playHit();
+      // 命中エフェクト（波紋＋得点表示）
+      this.flashes.push({ x: p.x, y: p.y, r: 6, life: 0.35, color });
+      this.popups.push({ x: p.x, y: p.y, text: `+${hit.points}`, color, life: 0.9, vy: -60 });
+      // 当たった的は別の場所へ新しく出現
+      Object.assign(hit, spawnTarget(this.W, this.H));
+    }
+  }
+
+  // 照準(x,y)の当たり判定。的の中心が HIT_RADIUS 以内なら命中（一番近いもの）
   _hitTest(x, y) {
     let best = null, bestD = Infinity;
     for (const t of this.targets) {
       const d = Math.hypot(t.x - x, t.y - y);
-      if (d <= t.radius && d < bestD) { best = t; bestD = d; }
+      if (d <= CONFIG.HIT_RADIUS && d < bestD) { best = t; bestD = d; }
     }
     return best;
   }
@@ -105,7 +135,6 @@ export class Game {
       const s = 0.6 + 0.4 * t.pop; // 出現時に少し拡大
       const r = t.radius * s;
       ctx.save();
-      // 影つきの丸
       ctx.beginPath();
       ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
       ctx.fillStyle = t.type.color;
@@ -115,7 +144,6 @@ export class Game {
       ctx.lineWidth = 4;
       ctx.strokeStyle = t.type.color;
       ctx.stroke();
-      // 絵文字
       ctx.font = `${Math.round(r * 1.3)}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -123,12 +151,32 @@ export class Game {
       ctx.restore();
     }
 
-    // 発射の波紋
+    // 弾（見える）
+    for (const b of this.bullets) {
+      const n = Math.hypot(b.vx, b.vy) || 1;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = b.color;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.vx / n * 22, b.y - b.vy / n * 22); // 尾を引く
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = b.color;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    // 命中の波紋
     for (const f of this.flashes) {
       ctx.save();
-      ctx.globalAlpha = Math.max(0, f.life / 0.3) * 0.6;
+      ctx.globalAlpha = Math.max(0, f.life / 0.35) * 0.7;
       ctx.strokeStyle = f.color;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
       ctx.stroke();
@@ -146,10 +194,10 @@ export class Game {
       ctx.restore();
     }
 
-    // 照準
+    // 照準（大きさ＝当たり判定）
     players.forEach((p, idx) => {
       if (!p || !p.visible) return;
-      drawCrosshair(ctx, p.x, p.y, CONFIG.PLAYER_COLORS[idx] || '#fff', p.opacity ?? 1);
+      drawCrosshair(ctx, p.x, p.y, CONFIG.PLAYER_COLORS[idx] || '#fff', CONFIG.CROSSHAIR_RADIUS, p.opacity ?? 1);
     });
 
     this._drawHUD(ctx);
@@ -164,7 +212,6 @@ export class Game {
   }
 
   _drawHUD(ctx) {
-    // 残り時間（左上）
     const t = Math.ceil(this.timeLeft);
     const warn = t <= 10;
     panel(ctx, 24, 20, 200, 64);
@@ -174,7 +221,6 @@ export class Game {
     ctx.textBaseline = 'middle';
     ctx.fillText(`⏱ ${t}`, 44, 54);
 
-    // スコア（右上）
     const sw = 280;
     panel(ctx, this.W - sw - 24, 20, sw, 64);
     ctx.fillStyle = '#ffd23b';
@@ -186,7 +232,6 @@ export class Game {
     ctx.textAlign = 'left';
     ctx.fillText('SCORE', this.W - sw - 4, 54);
 
-    // モード表示（上中央）
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.font = 'bold 22px sans-serif';
     ctx.textAlign = 'center';
