@@ -58,6 +58,18 @@ function getPlayers() {
 canvas.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.shoot = true; });
 
+// スマホ・タブレット用：タップで「狙う＋撃つ」、なぞって照準移動
+canvas.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  if (t) { mouse.x = t.clientX; mouse.y = t.clientY; mouse.shoot = true; }
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  const t = e.touches[0];
+  if (t) { mouse.x = t.clientX; mouse.y = t.clientY; }
+  e.preventDefault();
+}, { passive: false });
+
 // ===== メインループ =====
 let last = performance.now();
 let countdown = 0;
