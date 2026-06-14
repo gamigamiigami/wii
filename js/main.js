@@ -243,3 +243,6 @@ $('btn-ranking-export').onclick = () => exportRanking();
 // 初期表示
 $('sens').value = session.sensitivity;
 $('sens2').value = session.sensitivity;
+
+// デバッグ/自動テスト用にゲーム内部を公開（通常プレイには影響しません）
+window.__ffs = { game, session, sm, tracker, audio, STATES };

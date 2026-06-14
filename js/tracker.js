@@ -84,7 +84,7 @@ export class HandTracker {
 
   _slot(i, alpha) {
     if (!this._slots[i]) {
-      this._slots[i] = { sm: new Smoother(alpha), x: null, y: null, wasFist: false, lastShot: 0, lastSeen: 0 };
+      this._slots[i] = { sm: new Smoother(alpha), x: null, y: null, wasFist: false, lastShot: -Infinity, lastSeen: 0 };
     }
     return this._slots[i];
   }
