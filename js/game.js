@@ -138,7 +138,7 @@ export class Game {
       // 着地：狙った奥行きの地面にマークを出して消える（外し方＝手前/奥が見える）
       if (st.h <= 0 || b.t > 2.4) {
         const land = this._project((b.worldX0 || 0) + b.vlane * b.T, b.vz * b.T, 0);
-        this.splashes.push({ x: land.x, y: land.y, s: land.s, life: 0.5, color: b.color });
+        this.splashes.push({ x: land.x, y: land.y, s: land.s, life: 0.7, color: b.color });
         continue;
       }
       survivors.push(b);
@@ -161,7 +161,7 @@ export class Game {
     const zT = Math.max(0.08, zc - CONFIG.DROP_K * zc * zc);
     const worldXT = aim.worldX * (1 + zT) / (1 + zc); // 着地点の画面x＝カーソルxに合わせる
     const g = CONFIG.BULLET_GRAVITY;
-    const T = Math.max(0.34, Math.min(0.95, 0.34 + zT * 0.16)); // 奥ほど時間がかかる＝先読み必要
+    const T = Math.max(0.34, Math.min(1.1, 0.34 + zT * 0.24)); // 奥ほど大きく弧を描く＝飛距離に差が出る
     const worldX0 = 0;                             // 大砲は中央に固定（向きで狙う）
     this.bullets.push({
       worldX0, h0: this.hFloat,
@@ -190,10 +190,10 @@ export class Game {
 
     // 着地マーク（地面に広がる輪。手前に落ちたか奥に落ちたか＝外し方が見える）
     for (const sp of this.splashes) {
-      const k = 1 - sp.life / 0.5;
-      const rr = (6 + k * 34) * sp.s;
+      const k = 1 - sp.life / 0.7;
+      const rr = (8 + k * 60) * sp.s;
       ctx.save();
-      ctx.globalAlpha = (1 - k) * 0.6;
+      ctx.globalAlpha = (1 - k) * 0.7;
       ctx.strokeStyle = sp.color;
       ctx.lineWidth = Math.max(2, 3 * sp.s);
       ctx.beginPath();
@@ -207,6 +207,19 @@ export class Game {
       const cur = this._ballState(b);
       const prev = this._ballState(b, Math.max(0, b.t - 0.04));
       const r = b.baseR * cur.s;
+      // 真下の影（床のどこにいるか＝奥行きが一目で分かる）
+      const ground = this._project(cur.worldX, cur.z, 0);
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(ground.x, ground.y, r * 0.95, r * 0.34, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.18;          // 影と球をつなぐ薄い縦線（高さの目印）
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cur.x, cur.y); ctx.lineTo(ground.x, ground.y); ctx.stroke();
+      ctx.restore();
       ctx.save();
       ctx.lineCap = 'round';
       ctx.globalAlpha = 0.35;
