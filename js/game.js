@@ -10,8 +10,10 @@ import { CONFIG } from './config.js';
 import { spawnTarget } from './targets.js';
 import { drawCrosshair } from './crosshair.js';
 
-const Z_NEAR = 0.45;          // 一番手前の的の奥行き（プレイヤーから少し離れた所から的エリア）
-const Z_FAR = 3.0;            // 一番奥の的の奥行き
+const Z_NEAR = 1.0;           // 的ゾーン手前端（これより手前には的が出ない = 弾がアンダーシュートする領域）
+const Z_FAR = 2.2;            // 的ゾーン奥端（これより奥には的が出ない = 弾がオーバーシュートする領域）
+// 弾の着地レンジは約 z=0.06(最手前) 〜 3.0+(照準を地平線近くに向けた場合)
+// 的ゾーン(1.0-2.2)はその中間に収まり、上に向けると弾が全マトより奥に落ち、下に向けると全マトより手前に落ちる。
 
 export class Game {
   constructor(canvas, audio) {
