@@ -9,7 +9,7 @@
 // ============================================================
 
 import { CONFIG } from './config.js';
-import { Smoother } from './crosshair.js';
+import { AimFilter } from './crosshair.js';
 
 export class HandTracker {
   constructor() {
@@ -27,7 +27,8 @@ export class HandTracker {
     // 1) カメラ起動
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        // 解像度を上げると手のひらの関節が鮮明になり、向きの検出が安定する
+        video: { width: { ideal: 960 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, facingMode: 'user' },
         audio: false,
       });
       video.srcObject = stream;
@@ -44,6 +45,10 @@ export class HandTracker {
         baseOptions: { modelAssetPath: CONFIG.MODEL_PATH, delegate: 'GPU' },
         numHands: 2,
         runningMode: 'VIDEO',
+        // 追跡が途切れて照準が飛ぶのを減らす：いちど捉えた手は粘って追い続ける
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4,
       };
       try {
         this.recognizer = await vision.GestureRecognizer.createFromOptions(fileset, opts);
@@ -92,20 +97,22 @@ export class HandTracker {
   }
 
   // 手のひらの法線ベクトル（手のひらが向いている方向）を求め、狙い方向 x,y(-1..1) に変換。
-  // 手首・人差し指の付け根・小指の付け根の3点で手のひらの「面」を作り、その垂線を法線とする。
+  // 手のひら5点（手首＋人差し〜小指の付け根）でできる多角形の法線を Newell法 で求める。
+  // 3点の三角形より多くの点を使うぶんノイズが平均化され、向きが安定する。
   // worldLandmarks を使うので、手を画面のどこに置いても向きだけで狙える。
   _palmAim(wl, handed) {
     if (!wl || wl.length < 18) return null;
-    const W = wl[0], I = wl[5], P = wl[17];
-    const v1 = { x: I.x - W.x, y: I.y - W.y, z: I.z - W.z };
-    const v2 = { x: P.x - W.x, y: P.y - W.y, z: P.z - W.z };
-    // 外積 = 手のひらに垂直な法線
-    let nx = v1.y * v2.z - v1.z * v2.y;
-    let ny = v1.z * v2.x - v1.x * v2.z;
-    let nz = v1.x * v2.y - v1.y * v2.x;
+    const poly = [wl[0], wl[5], wl[9], wl[13], wl[17]]; // 手のひらの輪郭（手首→各指の付け根）
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = 0; k < poly.length; k++) {
+      const a = poly[k], b = poly[(k + 1) % poly.length];
+      nx += (a.y - b.y) * (a.z + b.z);
+      ny += (a.z - b.z) * (a.x + b.x);
+      nz += (a.x - b.x) * (a.y + b.y);
+    }
     const len = Math.hypot(nx, ny, nz) || 1;
     nx /= len; ny /= len;
-    // 左右の手で外積の向き(符号)が反転するので、手の左右でそろえる
+    // 左右の手で法線の向き(符号)が反転するので、手の左右でそろえる
     if (handed === 'Left') { nx = -nx; ny = -ny; }
     // 映像は鏡映しなので左右を反転。さらに設定で上下左右を反転できる。
     let x = -nx, y = ny;
@@ -130,9 +137,13 @@ export class HandTracker {
 
   get handCount() { return this.latest.length; }
 
-  _slot(i, alpha) {
+  _slot(i) {
     if (!this._slots[i]) {
-      this._slots[i] = { sm: new Smoother(alpha), x: null, y: null, wasFist: false, lastShot: -Infinity, lastSeen: 0 };
+      this._slots[i] = {
+        sm: new AimFilter(CONFIG.AIM_SMOOTH_MIN_CUTOFF, CONFIG.AIM_SMOOTH_BETA),
+        x: null, y: null, nax: null, nay: null,
+        wasFist: false, lastShot: -Infinity, lastSeen: 0,
+      };
     }
     return this._slots[i];
   }
@@ -143,10 +154,17 @@ export class HandTracker {
     const now = performance.now();
     const out = [];
     for (let i = 0; i < count; i++) {
-      const slot = this._slot(i, sensitivity);
+      const slot = this._slot(i);
       slot.sm.setAlpha(sensitivity);
       const det = this.latest[i];
       if (det) {
+        // 手のひらの向きベクトル自体を軽く平滑化（gainで増幅される前にブレを抑える）
+        if (det.ax !== null) {
+          const a = CONFIG.AIM_NORMAL_SMOOTH;
+          slot.nax = slot.nax === null ? det.ax : slot.nax + a * (det.ax - slot.nax);
+          slot.nay = slot.nay === null ? det.ay : slot.nay + a * (det.ay - slot.nay);
+          det.ax = slot.nax; det.ay = slot.nay;
+        }
         const t = this._aimToScreen(det, W, H);
         const { x, y } = slot.sm.push(t.x, t.y);
         slot.x = x; slot.y = y; slot.lastSeen = now;
@@ -161,7 +179,7 @@ export class HandTracker {
         if (slot.x !== null && age < CONFIG.CROSSHAIR_HOLD_MS) {
           out.push({ x: slot.x, y: slot.y, shoot: false, visible: true, opacity: 1 - age / CONFIG.CROSSHAIR_HOLD_MS });
         } else {
-          slot.sm.reset(); slot.wasFist = false;
+          slot.sm.reset(); slot.wasFist = false; slot.nax = null; slot.nay = null;
           out.push({ x: slot.x ?? W / 2, y: slot.y ?? H / 2, shoot: false, visible: false, opacity: 0 });
         }
       }
