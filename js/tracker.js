@@ -1,8 +1,10 @@
 // ============================================================
 //  カメラで手を追う部分（MediaPipe GestureRecognizer）
-//  ・手の位置 → 照準
+//  ・手の傾き方向 → 照準（Wii風：向きで狙う）
+//    手首(lm[0])→中指MCP(lm[9]) のベクトルの向きが照準位置を決める。
+//    右に傾けると右、上に向けると遠くを狙う。体の位置に関係なく「向き」だけで狙える。
 //  ・✊グー(Closed_Fist) → 発射
-//  ・2人ぶんの手を同時に追い、画面の左=P1 / 右=P2 に割り当て
+//  ・2人ぶんの手を同時に追い、画面の左=P1 / 右=P2 に割り当て（位置ベース）
 //  カメラやモデルの読み込みに失敗しても例外を投げず、ready=false を返します。
 // ============================================================
 
@@ -15,14 +17,13 @@ export class HandTracker {
     this.recognizer = null;
     this.ready = false;
     this.error = null;
-    this.latest = [];        // [{nx, ny, fist}]（nxは鏡映し済み 0..1）
+    this.latest = [];        // [{nx, ndx, ndy, len, fist}]
     this._lastVideoTime = -1;
     this._slots = [];
   }
 
   async init(video) {
     this.video = video;
-    // 1) カメラ起動
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
@@ -34,7 +35,6 @@ export class HandTracker {
       this.error = 'camera';
       throw e;
     }
-    // 2) 手認識モデル読み込み
     try {
       const vision = await import(CONFIG.VISION_ESM);
       const fileset = await vision.FilesetResolver.forVisionTasks(CONFIG.WASM_PATH);
@@ -46,7 +46,6 @@ export class HandTracker {
       try {
         this.recognizer = await vision.GestureRecognizer.createFromOptions(fileset, opts);
       } catch (gpuErr) {
-        // GPUが使えない端末はCPUで再挑戦
         opts.baseOptions.delegate = 'CPU';
         this.recognizer = await vision.GestureRecognizer.createFromOptions(fileset, opts);
       }
@@ -71,12 +70,27 @@ export class HandTracker {
     const hands = [];
     const n = res.landmarks ? res.landmarks.length : 0;
     for (let i = 0; i < n; i++) {
-      const lm = res.landmarks[i][9]; // 中指の付け根（一番ブレない点）
+      const lm = res.landmarks[i];
+      const lm0 = lm[0];   // 手首
+      const lm9 = lm[9];   // 中指MCP（安定点）
       const g = res.gestures?.[i]?.[0];
       const fist = g && g.categoryName === 'Closed_Fist' && g.score >= CONFIG.GESTURE_SCORE_MIN;
-      hands.push({ nx: 1 - lm.x, ny: lm.y, fist }); // x は鏡映し
+
+      // P1/P2割り当て用の画面位置（鏡映し）
+      const nx = 1 - lm9.x;
+
+      // 指す方向ベクトル（鏡映しスクリーン座標系）
+      //   dx: lm0.x - lm9.x  正=プレイヤー右=カーソル右
+      //   dy: lm9.y - lm0.y  負=MCP が手首より上=上方向=遠い的
+      const dx = lm0.x - lm9.x;
+      const dy = lm9.y - lm0.y;
+      const len = Math.hypot(dx, dy);
+      const ndx = len > 0.02 ? dx / len : 0;
+      const ndy = len > 0.02 ? dy / len : 0;
+
+      hands.push({ nx, ndx, ndy, len, fist });
     }
-    hands.sort((a, b) => a.nx - b.nx); // 左→右の順
+    hands.sort((a, b) => a.nx - b.nx); // 左→右の順でP1/P2割り当て
     this.latest = hands;
   }
 
@@ -90,7 +104,6 @@ export class HandTracker {
   }
 
   // ゲーム/キャリブで使う players を作る
-  // count: 1 か 2 / W,H: キャンバスのサイズ / sensitivity: 追従の強さ
   getPlayers(count, W, H, sensitivity) {
     const now = performance.now();
     const out = [];
@@ -99,14 +112,22 @@ export class HandTracker {
       slot.sm.setAlpha(sensitivity);
       const det = this.latest[i];
       if (det) {
-        const { x, y } = slot.sm.push(det.nx * W, det.ny * H);
-        slot.x = x; slot.y = y; slot.lastSeen = now;
+        // 方向ベクトルから照準スクリーン座標を計算（Wii風）
+        // ndx: -1=左, 0=前方, +1=右  ndy: -1=上向き(遠い), 0=横向き, +1=下向き(近い)
+        if (det.len > 0.02) {
+          const raw_x = W * (0.5 + det.ndx * CONFIG.DIR_H_SCALE);
+          const raw_y = H * (0.5 + (det.ndy + CONFIG.DIR_V_OFFSET) * CONFIG.DIR_V_SCALE);
+          const pos = slot.sm.push(raw_x, raw_y);
+          slot.x = pos.x;
+          slot.y = pos.y;
+        }
+        slot.lastSeen = now;
         let shoot = false;
         if (det.fist && !slot.wasFist && (now - slot.lastShot) > CONFIG.SHOOT_COOLDOWN_MS) {
           shoot = true; slot.lastShot = now;
         }
         slot.wasFist = det.fist;
-        out.push({ x, y, shoot, visible: true, opacity: 1 });
+        out.push({ x: slot.x ?? W / 2, y: slot.y ?? H / 2, shoot, visible: true, opacity: 1 });
       } else {
         const age = now - slot.lastSeen;
         if (slot.x !== null && age < CONFIG.CROSSHAIR_HOLD_MS) {
