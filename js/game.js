@@ -22,6 +22,7 @@ export class Game {
     this.bullets = [];
     this.popups = [];
     this.flashes = [];
+    this.splashes = [];
     this.score = 0;
     this.timeLeft = CONFIG.GAME_DURATION;
     this.mode = '1P';
@@ -65,6 +66,7 @@ export class Game {
     this.bullets = [];
     this.popups = [];
     this.flashes = [];
+    this.splashes = [];
     this.targets = [];
     for (let i = 0; i < CONFIG.TARGET_COUNT; i++) {
       const t = spawnTarget(Z_NEAR, Z_FAR, this.laneMax);
@@ -133,8 +135,13 @@ export class Game {
         this._projectTarget(hitT);
         continue; // 弾は消費
       }
-      // 地面に落ちる or 画面外で消える
-      if (st.h > -this.hFloat && st.y < this.H + 160 && st.x > -120 && st.x < this.W + 120 && b.t < 2.6) survivors.push(b);
+      // 着地：狙った奥行きの地面にマークを出して消える（外し方＝手前/奥が見える）
+      if (st.h <= 0 || b.t > 2.4) {
+        const land = this._project((b.worldX0 || 0) + b.vlane * b.T, b.vz * b.T, 0);
+        this.splashes.push({ x: land.x, y: land.y, s: land.s, life: 0.5, color: b.color });
+        continue;
+      }
+      survivors.push(b);
     }
     this.bullets = survivors;
 
@@ -142,6 +149,7 @@ export class Game {
     this.popups.forEach(pp => { pp.y += pp.vy * dt; });
     this.flashes = this.flashes.filter(f => (f.life -= dt) > 0);
     this.flashes.forEach(f => { f.r += dt * 240; });
+    this.splashes = this.splashes.filter(sp => (sp.life -= dt) > 0);
   }
 
   // 1球投げる：照準＝狙う方向。重力ドロップで、遠くを狙うほど手前に着地する（=遠い的は上を狙う）。
@@ -154,19 +162,20 @@ export class Game {
     const worldXT = aim.worldX * (1 + zT) / (1 + zc); // 着地点の画面x＝カーソルxに合わせる
     const g = CONFIG.BULLET_GRAVITY;
     const T = Math.max(0.34, Math.min(0.95, 0.34 + zT * 0.16)); // 奥ほど時間がかかる＝先読み必要
-    const worldX0 = p.x - this.W / 2;              // 手の位置(カーソルX)の真下から発射＝右の人は右から
+    const worldX0 = 0;                             // 大砲は中央に固定（向きで狙う）
     this.bullets.push({
-      worldX0, h0: this.hFloat,                    // 投げ出し位置（手の側）＋高さ＝的の高さ
+      worldX0, h0: this.hFloat,
       vlane: (worldXT - worldX0) / T, vz: zT / T, vh0: 0.5 * g * T,
       g, t: 0, T, color, baseR: CONFIG.BULLET_RADIUS,
     });
   }
 
-  // 弾の状態（ワールド物理→画面）。h=高さ：両端で hFloat、飛行中はその上。
+  // 弾の状態（ワールド物理→画面）。前進(奥行き/左右)は着弾点(t=T)で止め、高さは落ち続ける＝その場で地面へ。
   _ballState(b, t = b.t) {
-    const z = b.vz * t;
-    const worldX = (b.worldX0 || 0) + b.vlane * t;
-    const h = b.h0 + b.vh0 * t - 0.5 * b.g * t * t;
+    const tz = Math.min(t, b.T);                   // 奥行き・左右は着弾点で止める
+    const z = b.vz * tz;
+    const worldX = (b.worldX0 || 0) + b.vlane * tz;
+    const h = b.h0 + b.vh0 * t - 0.5 * b.g * t * t; // 高さは重力で落ち続ける
     const pr = this._project(worldX, z, h);
     return { x: pr.x, y: pr.y, s: pr.s, z, worldX, h };
   }
@@ -178,6 +187,20 @@ export class Game {
     // 的：奥(z大)から先に、手前(z小)を後に描く
     const ordered = [...this.targets].sort((a, b) => b.z - a.z);
     for (const t of ordered) this._drawTarget(ctx, t);
+
+    // 着地マーク（地面に広がる輪。手前に落ちたか奥に落ちたか＝外し方が見える）
+    for (const sp of this.splashes) {
+      const k = 1 - sp.life / 0.5;
+      const rr = (6 + k * 34) * sp.s;
+      ctx.save();
+      ctx.globalAlpha = (1 - k) * 0.6;
+      ctx.strokeStyle = sp.color;
+      ctx.lineWidth = Math.max(2, 3 * sp.s);
+      ctx.beginPath();
+      ctx.ellipse(sp.x, sp.y, rr, rr * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // 弾（前方へ投げて落ちる球。奥へ行くほど小さく。立体的な陰影＋尾）
     for (const b of this.bullets) {
